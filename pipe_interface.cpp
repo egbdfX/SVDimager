@@ -137,11 +137,11 @@ int main(int argc, char* argv[]) {
     size_t num_baselines = std::stoul(argv[6]);
     float freq_hz = std::stof(argv[7]);
     float cell_size = std::stof(argv[8]);
-	sprintf(output_name, "%s", argv[9]);
+    sprintf(output_name, "%s", argv[9]);
 	
-	FIpipe(Visreal, Visimag, Bin, Vin, dirty_image, num_baselines, image_size, freq_hz, cell_size);
+    FIpipe(Visreal, Visimag, Bin, Vin, dirty_image, num_baselines, image_size, freq_hz, cell_size);
 	
-	long naxes[2] = {long(image_size), long(image_size)};
+    long naxes[2] = {long(image_size), long(image_size)};
     int status = write_fits_image(output_name, dirty_image, naxes);
     if (status) {
         fprintf(stderr, "Error writing FITS image\n");
