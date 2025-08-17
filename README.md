@@ -30,7 +30,7 @@ If you have any questions or need further assistance, please feel free to contac
 
 **When referencing this code, please cite our related paper:**
 
-X. Li, K. Adámek, M. Giles, W. Armour, "Fast imaging pipeline for transient detection with GPU acceleration," 2024.
+X. Li, K. Adámek, M. Giles, W. Armour, "Fast imaging pipeline for transient detection with GPU acceleration," 2025.
 
 ## License
 
