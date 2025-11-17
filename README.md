@@ -1,6 +1,6 @@
-# SVD Imager
+# Transient-Oriented Imager (TOI)
 
-We have developed a GPU-accelerated SVD imager for Fast Imaging in radio astronomy. While it is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
+We have developed a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in radio astronomy. While it is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
 
 ## User guidance
 
