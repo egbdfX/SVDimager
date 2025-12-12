@@ -30,7 +30,7 @@ If you have any questions or need further assistance, please feel free to contac
 
 **When referencing this code, please cite our related paper:**
 
-X. Li, K. Adámek, M. Giles, W. Armour, "FIP-TOI: Fast Imaging Pipeline for Pulsar Localisation with a Transient-Oriented Radio Astronomical Imager," 2025.
+X. Li, K. Adámek, M. Giles, W. Armour, "[FIP-TOI: Fast Imaging Pipeline for Pulsar Localisation with a Transient-Oriented Radio Astronomical Imager](https://arxiv.org/abs/2512.06254)," 2025.
 
 ## License
 
