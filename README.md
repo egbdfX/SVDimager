@@ -21,7 +21,7 @@ Here, ```Visreal_input.fits```, ```Visimag_input.fits```, ```B_input.fits```, an
 The code will output a FITS file named ```Output_Name.fits``` (as user defined), which is the output snapshot.
 
 ## Test
-If you want to test the code, please download the files from 'ExampleInput'. Run the code by ```./sharedlibrary_gpu Visreal0.fits Visimag0.fits Bin0.fits Vin0.fits 4096 2080 50000000 0.0000213 dirty0.fits```. You should obtain a FITS file named dirty0.fits. If you open it (by SAOImageDS9, Fv or MATLAB etc), you will see a simulated sky brightness distribution of regular distributed sources. 
+If you want to test the code, please download the files from 'ExampleInput'. Run the code by ```./sharedlibrary_gpu Visreal0.fits Visimag0.fits Bin0.fits Vin0.fits 4096 2080 50000000 0.0000213 dirty0.fits```. You should obtain a FITS file named ```dirty0.fits```. If you open it (by SAOImageDS9, Fv or MATLAB etc), you will see a simulated sky brightness distribution of regular distributed sources. 
 
 ## Contact
 If you have any questions or need further assistance, please feel free to contact at [egbdfmusic1@gmail.com](mailto:egbdfmusic1@gmail.com).
