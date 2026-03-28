@@ -5,7 +5,7 @@
 #include <iostream>
 #include <chrono>
 
-int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_image, size_t num_baselines, size_t image_size, float freq_hz, float cell_size);
+int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_image, size_t num_baselines, size_t image_size, float cell_size);
 
 using namespace std;
 
@@ -135,11 +135,10 @@ int main(int argc, char* argv[]) {
     float* dirty_image = (float*)malloc(image_size*image_size*sizeof(float));
 
     size_t num_baselines = std::stoul(argv[6]);
-    float freq_hz = std::stof(argv[7]);
-    float cell_size = std::stof(argv[8]);
-    sprintf(output_name, "%s", argv[9]);
+    float cell_size = std::stof(argv[7]);
+    sprintf(output_name, "%s", argv[8]);
 	
-    FIpipe(Visreal, Visimag, Bin, Vin, dirty_image, num_baselines, image_size, freq_hz, cell_size);
+    FIpipe(Visreal, Visimag, Bin, Vin, dirty_image, num_baselines, image_size, cell_size);
 	
     long naxes[2] = {long(image_size), long(image_size)};
     int status = write_fits_image(output_name, dirty_image, naxes);
