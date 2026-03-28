@@ -13,15 +13,15 @@ Run the Makefile by ```make```. Note that this Makefile is written for NVIDIA H1
 **Step 3:**
 Run the code by executing the following command:
 
-```./sharedlibrary_gpu Visreal_input.fits Visimag_input.fits B_input.fits V_input.fits Image_Size Number_of_Baselines Frequency Cell_Size Output_Name.fits```.
+```./sharedlibrary_gpu Visreal_input.fits Visimag_input.fits B_input.fits V_input.fits Image_Size Number_of_Rows Cell_Size Output_Name.fits```.
 
-Here, ```Visreal_input.fits```, ```Visimag_input.fits```, ```B_input.fits```, and ```V_input.fits``` are the input files (in FITS format) corresponding to the real components of visibilities, the imagery components of visibilities, the (centred) SVDed baseline matrix, and the V matrix in the SVD, respectively. The remaining arguments are as their names suggest, where ```Image_Size``` is an integer (e.g., if you input 100, it means the image size is $100 \times 100$ pixels), ```Number_of_Baselines``` is an integer, ```Frequency``` is in units of Hz, ```Cell_Size``` is in units of radians, and the last argument is the name of the output file which should end with '.fits'.
+Here, ```Visreal_input.fits```, ```Visimag_input.fits```, ```B_input.fits```, and ```V_input.fits``` are the input files (in FITS format) corresponding to the real components of visibilities, the imagery components of visibilities, the (centred) SVDed baseline matrix, and the V matrix in the SVD, respectively. The remaining arguments are as their names suggest, where ```Image_Size``` is an integer (e.g., if you input 100, it means the image size is $100 \times 100$ pixels), ```Number_of_Rows = Number_of_Baselines * Number_of_Frequency_Channels``` is an integer, ```Cell_Size``` is in units of radians, and the last argument is the name of the output file which should end with '.fits'.
 
 **Step 4:**
 The code will output a FITS file named ```Output_Name.fits``` (as user defined), which is the output snapshot.
 
 ## Test
-If you want to test the code, please download the files from 'ExampleInput'. Run the code by ```./sharedlibrary_gpu Visreal0.fits Visimag0.fits Bin0.fits Vin0.fits 4096 2080 50000000 0.0000213 dirty0.fits```. You should obtain a FITS file named ```dirty0.fits```. If you open it (by SAOImageDS9, Fv or MATLAB etc), you will see a simulated sky brightness distribution of regular distributed sources. 
+If you want to test the code, please download the files from 'ExampleInput'. Run the code by ```./sharedlibrary_gpu Visreal0.fits Visimag0.fits Bin0.fits Vin0.fits 4096 2080 0.0000213 dirty0.fits```. You should obtain a FITS file named ```dirty0.fits```. If you open it (by SAOImageDS9, Fv or MATLAB etc), you will see a simulated sky brightness distribution of regular distributed sources. 
 
 ## Contact
 If you have any questions or need further assistance, please feel free to contact at [egbdfmusic1@gmail.com](mailto:egbdfmusic1@gmail.com).
