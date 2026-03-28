@@ -193,8 +193,7 @@ __global__ void computeVisWeighted(float *Vis_real, float *Vis_imag, size_t num_
 	}
 }
 
-__global__ void gridding(float* B_in, float* w_grid_stack_real, float* w_grid_stack_imag, float* Vis_real, float* Vis_imag, float freq_hz, float uv_scale, size_t grid_size, size_t num_baselines) {
-	float inv_wavelength = freq_hz / 299792458;
+__global__ void gridding(float* B_in, float* w_grid_stack_real, float* w_grid_stack_imag, float* Vis_real, float* Vis_imag, float uv_scale, size_t grid_size, size_t num_baselines) {
 	const int support = 8;
 	int half_support = support / 2;
 	float inv_half_support = 1 / static_cast<float>(half_support);
@@ -208,8 +207,8 @@ __global__ void gridding(float* B_in, float* w_grid_stack_real, float* w_grid_st
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	if (idx < num_baselines) {
-		float pos_u = B_in[idx*2+0] * inv_wavelength * uv_scale;
-		float pos_v = B_in[idx*2+1] * inv_wavelength * uv_scale;
+		float pos_u = B_in[idx*2+0] * uv_scale;
+		float pos_v = B_in[idx*2+1] * uv_scale;
 		long int grid_u_min = max(ceil_device(pos_u - half_support), grid_min_uv);
 		long int grid_u_max = min(floor_device(pos_u + half_support), grid_max_uv);
 		long int grid_v_min = max(ceil_device(pos_v - half_support), grid_min_uv);
@@ -428,7 +427,7 @@ __global__ void finalinterp(float* output_index, float* dirty_pre, float* dirty,
 	}
 }
 
-int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_image, size_t num_baselines, size_t image_size, float freq_hz, float cell_size){
+int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_image, size_t num_baselines, size_t image_size, float cell_size){
 	float* Vis_real;
 	float* Vis_imag;
 	float* B_in;
@@ -527,7 +526,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	/* ****************************************************** */
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
-	gridding<<<num_blocks,num_threads,0,stream1>>>(B_in, w_grid_stack_real, w_grid_stack_imag, Vis_real, Vis_imag, freq_hz, uv_scale, grid_size, num_baselines);
+	gridding<<<num_blocks,num_threads,0,stream1>>>(B_in, w_grid_stack_real, w_grid_stack_imag, Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
 	cudaError = cudaGetLastError();
 	if(cudaError != cudaSuccess){
 		printf("ERROR! GPU Kernel 4 error.\n");
