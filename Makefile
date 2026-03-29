@@ -2,13 +2,9 @@ CUDA_HOME ?= /usr/local/cuda
 
 CFITSIO_HOME := $(HOME)/Libraries/cfitsio
 
-INC := -I$(CUDA_HOME)/include \
-       -I$(CFITSIO_HOME)/include \
-       -I.
+INC := -I$(CUDA_HOME)/include -I$(CFITSIO_HOME)/include -I.
 
-LIB := -L$(CUDA_HOME)/lib64 \
-       -L$(CFITSIO_HOME)/lib \
-       -lcudart -lcfitsio -lcufft
+LIB := -L$(CUDA_HOME)/lib64 -L$(CFITSIO_HOME)/lib -lcudart -lcfitsio -lcufft
 
 GCC := g++
 NVCC := $(CUDA_HOME)/bin/nvcc
