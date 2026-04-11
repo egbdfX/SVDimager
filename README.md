@@ -1,6 +1,6 @@
 # Transient-Oriented Imager (TOI)
 
-We have developed a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in radio astronomy. While it is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
+We have developed a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in radio astronomy. While it is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. This imager supports flag-based data correction, frequency-dependent weighting (via the WEIGHT_SPECTRUM column), and multi-frequency synthesis (MFS). Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
 
 ## User guidance
 
@@ -20,8 +20,9 @@ Here, ```Visreal_input.fits```, ```Visimag_input.fits```, ```B_input.fits```, an
 **Step 4:**
 The code will output a FITS file named ```Output_Name.fits``` (as user defined), which is the output snapshot.
 
-## Test
-If you want to test the code, please download the files from 'ExampleInput'. Run the code by ```./sharedlibrary_gpu Visreal0.fits Visimag0.fits Bin0.fits Vin0.fits 4096 2080 0.0000213 dirty0.fits```. You should obtain a FITS file named ```dirty0.fits```. If you open it (by SAOImageDS9, Fv or MATLAB etc), you will see a simulated sky brightness distribution of regular distributed sources. 
+## Input Generation
+
+Run ```python SVD_MFS.py``` to generate inputs from per-time-slot Measurement Sets. Adjust the number of loops to read multiple Measurement Sets.
 
 ## Contact
 If you have any questions or need further assistance, please feel free to contact at [egbdfmusic1@gmail.com](mailto:egbdfmusic1@gmail.com).
