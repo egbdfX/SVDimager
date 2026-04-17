@@ -49,11 +49,11 @@ for ind in range(1):
     ])
     
     num = len(baselines_nu)
-    rank = 2
+    rank = 3
     gro = 1
     M = numpy.zeros((gro,3))
-    V = numpy.zeros((gro*2,3))
-    B = numpy.zeros((num,gro*2))
+    V = numpy.zeros((gro*3,3))
+    B = numpy.zeros((num,gro*3))
     for k in range(gro):
         D = numpy.zeros((num,3))
         for i in range(num):
@@ -67,9 +67,11 @@ for ind in range(1):
         M[k] = M1
         V[2*k] = V1[0]
         V[2*k+1] = V1[1]
+        V[2*k+2] = V1[2]
         for i in range(num):
             B[i][2*k] = B1[i][0]
             B[i][2*k+1] = B1[i][1]
+            B[i][2*k+2] = B1[i][2]
     
     w0 = weight_spectrum[:, :, 0] * (~flag[:, :, 0]).astype(float)
     w3 = weight_spectrum[:, :, 3] * (~flag[:, :, 3]).astype(float)
@@ -95,9 +97,7 @@ for ind in range(1):
     Bin = B.copy()
     Min = M.copy()
     Vin = numpy.zeros((3, V.shape[1]))
-    Vin[:V.shape[0], :] = V
-
-    Vin[2, :] = numpy.cross(Vin[0, :], Vin[1, :])
+    Vin = V.copy()
     
     M1 = numpy.dot(-Min, Vin[0, :])
     M2 = numpy.dot(-Min, Vin[1, :])
@@ -105,6 +105,7 @@ for ind in range(1):
 
     Bin[:, 0] = Bin[:, 0] - M1
     Bin[:, 1] = Bin[:, 1] - M2
+    Bin[:, 2] = Bin[:, 2] - M3
 
     fits.writeto('Bin' + str(ind) + '.fits', Bin, overwrite=True)
     fits.writeto('Min' + str(ind) + '.fits', Min, overwrite=True)
