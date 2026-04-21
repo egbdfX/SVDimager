@@ -213,9 +213,9 @@ __global__ void gridding(float* B_in,
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	if (idx < num_baselines) {
-		float pos_r1 = B_in[idx*2+0] * r1r2_scale;
-		float pos_r2 = B_in[idx*2+1] * r1r2_scale;
-        float r3 = B_in[idx * 3 + 2];
+		float pos_r1 = B_in[idx*3+0] * r1r2_scale;
+		float pos_r2 = B_in[idx*3+1] * r1r2_scale;
+        float r3 = B_in[idx*3+2];
 		float r32 = r3 * r3;
 		long int grid_r1_min = max(ceil_device(pos_r1 - half_support), grid_min_r1r2);
 		long int grid_r1_max = min(floor_device(pos_r1 + half_support), grid_max_r1r2);
@@ -246,10 +246,10 @@ __global__ void gridding(float* B_in,
                         
 				atomicAdd(&r30_grid_real[grid_offset_r1r2r3], Vis_real[idx] * kernel_value);
 				atomicAdd(&r30_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * kernel_value);
-				atomicAdd(&r31_grid_real[grid_offset_r1r2r3], Vis_real[idx] * c * kernel_value);
-				atomicAdd(&r31_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * c * kernel_value);
-				atomicAdd(&r32_grid_real[grid_offset_r1r2r3], Vis_real[idx] * c2 * kernel_value);
-				atomicAdd(&r32_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * c2 * kernel_value);
+				atomicAdd(&r31_grid_real[grid_offset_r1r2r3], Vis_real[idx] * r3 * kernel_value);
+				atomicAdd(&r31_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * r3 * kernel_value);
+				atomicAdd(&r32_grid_real[grid_offset_r1r2r3], Vis_real[idx] * r32 * kernel_value);
+				atomicAdd(&r32_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * r32 * kernel_value);
 			}
 		}
 	}
