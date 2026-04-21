@@ -255,12 +255,12 @@ __global__ void gridding(float* B_in,
 	}
 }
 
-__global__ void combineToComplex(float* w_real, float* w_imag, cufftComplex* complex_data, size_t grid_size) {
+__global__ void combineToComplex(float* data_real, float* data_imag, cufftComplex* complex_data, size_t grid_size) {
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 	size_t size = grid_size * grid_size;
 	if (idx < size) {
-		complex_data[idx].x = w_real[idx];
-		complex_data[idx].y = w_imag[idx];
+		complex_data[idx].x = data_real[idx];
+		complex_data[idx].y = data_imag[idx];
 	}
 }
 
