@@ -278,7 +278,12 @@ __global__ void ifftShift(cufftComplex* data, cufftComplex* data_shifted, size_t
 	}
 }
 
-__global__ void accumulation(float* dirty_pre, cufftComplex* w_grid_stack_shifted, size_t image_size, size_t grid_size) {
+__global__ void accumulation(float* dirty_pre,
+		const cufftComplex* moment0_shifted,
+		const cufftComplex* moment1_shifted,
+		const cufftComplex* moment2_shifted,
+		const float* V_in,
+		size_t image_size, size_t grid_size, float cell_size) {
 	size_t half_image_size = image_size / 2;
 	size_t grid_index_offset_image_centre = grid_size*grid_size/2 + grid_size/2;
 	size_t image_index_offset_image_centre = half_image_size*image_size + half_image_size;
@@ -288,7 +293,10 @@ __global__ void accumulation(float* dirty_pre, cufftComplex* w_grid_stack_shifte
 	if (idx < image_size && idy < image_size) { 
 		idx = idx - half_image_size;
 		idy = idy - half_image_size;
-		float pixel_sum = w_grid_stack_shifted[grid_index_offset_image_centre + idy*grid_size + idx].x;
+		float t1 = cell_size * static_cast<float>(idy);
+		float t2 = cell_size * static_cast<float>(idx);
+
+        float pixel_sum = w_grid_stack_shifted[grid_index_offset_image_centre + idy*grid_size + idx].x;
 		if (((abs(idx)+abs(idy)) & 1) != 0) {
 			pixel_sum = - pixel_sum;
 		}
