@@ -479,7 +479,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	float* w2_grid_imag;
 	float* pixel_ind;
 	cudaError_t cudaStatus;
-	cufftComplex* w_grid_stack;
+	cufftComplex* w0_grid_stack;
+	cufftComplex* w1_grid_stack;
+	cufftComplex* w2_grid_stack;
 	cufftComplex* w0_grid_shifted;
 	cufftComplex* w1_grid_shifted;
 	cufftComplex* w2_grid_shifted;
@@ -508,7 +510,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMalloc((void**)&w1_grid_imag, grid_size * grid_size * sizeof(float));
 	cudaMalloc((void**)&w2_grid_real, grid_size * grid_size * sizeof(float));
 	cudaMalloc((void**)&w2_grid_imag, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&w_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&w0_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&w1_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&w2_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&w0_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&w1_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&w2_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
@@ -542,9 +546,12 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	else {
 		printf("No CUDA error 1.\n");
 	}
-	cudaStream_t stream1, stream2;
+	cudaStream_t stream1, stream2, stream_fft0, stream_fft1, stream_fft;
 	cudaStreamCreate(&stream1);
 	cudaStreamCreate(&stream2);
+	cudaStreamCreate(&stream_fft0);
+	cudaStreamCreate(&stream_fft1);
+	cudaStreamCreate(&stream_fft2);
 	
 	cudaEventRecord(start);
 	/* ****************************************************** */
