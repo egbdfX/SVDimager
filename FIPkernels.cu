@@ -296,11 +296,27 @@ __global__ void accumulation(float* dirty_pre,
 		float t1 = cell_size * static_cast<float>(idy);
 		float t2 = cell_size * static_cast<float>(idx);
 
-        float pixel_sum = w_grid_stack_shifted[grid_index_offset_image_centre + idy*grid_size + idx].x;
+        const float v13 = V_in[0 * 3 + 2];
+		const float v23 = V_in[1 * 3 + 2];
+		const float v33 = V_in[2 * 3 + 2];
+        const float root_arg = 1.0f - (t1 + v13) * (t1 + v13) - (t2 + v23) * (t2 + v23);
+        if (root_arg < 0.0f) {
+			return;
+		}
+        const float branch_sign = (v33 >= 0.0f) ? 1.0f : -1.0f;
+        const float t3 = -v33 + branch_sign * sqrtf(root_arg);
+        
+        float phase = 2.0f * M_PI * t3;
+		float phase_sq = phase * phase;
+		cufftComplex m0 = moment0_shifted[grid_index_offset_image_centre + idy * grid_size + idx];
+		cufftComplex m1 = moment1_shifted[grid_index_offset_image_centre + idy * grid_size + idx];
+		cufftComplex m2 = moment2_shifted[grid_index_offset_image_centre + idy * grid_size + idx];
+        
+        float pixel_sum = m0.x - phase * m1.y - 0.5f * phase_sq * m2.x;
 		if (((abs(idx)+abs(idy)) & 1) != 0) {
 			pixel_sum = - pixel_sum;
 		}
-		dirty_pre[image_index_offset_image_centre + idy*image_size + idx] += pixel_sum;
+		dirty_pre[image_index_offset_image_centre + idy*image_size + idx] = pixel_sum;
 	}
 }
 
