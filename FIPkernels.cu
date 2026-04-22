@@ -471,12 +471,18 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	float* dirty;
 	float* dirty_pre;
 	float* conv_corr_kernel;
-	float* w_grid_stack_real;
-	float* w_grid_stack_imag;
+	float* w0_grid_real;
+	float* w0_grid_imag;
+	float* w1_grid_real;
+	float* w1_grid_imag;
+	float* w2_grid_real;
+	float* w2_grid_imag;
 	float* pixel_ind;
 	cudaError_t cudaStatus;
 	cufftComplex* w_grid_stack;
-	cufftComplex* w_grid_stack_shifted;
+	cufftComplex* w0_grid_shifted;
+	cufftComplex* w1_grid_shifted;
+	cufftComplex* w2_grid_shifted;
 	float* output_index;
 	cudaError_t cudaError;
 	
@@ -491,27 +497,37 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	
 	cudaMalloc((void**)&Vis_real, num_baselines * 1 * sizeof(float));
 	cudaMalloc((void**)&Vis_imag, num_baselines * 1 * sizeof(float));
-	cudaMalloc((void**)&B_in, num_baselines * 2 * sizeof(float));
+	cudaMalloc((void**)&B_in, num_baselines * 3 * sizeof(float));
 	cudaMalloc((void**)&V_in, 3 * 3 * sizeof(float));
 	cudaMalloc((void**)&dirty, image_size * image_size * sizeof(float));
 	cudaMalloc((void**)&dirty_pre, image_size * image_size * sizeof(float));
 	cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float));
-	cudaMalloc((void**)&w_grid_stack_real, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&w_grid_stack_imag, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&w0_grid_real, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&w0_grid_imag, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&w1_grid_real, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&w1_grid_imag, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&w2_grid_real, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&w2_grid_imag, grid_size * grid_size * sizeof(float));
 	cudaMalloc((void**)&w_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&w_grid_stack_shifted, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&w0_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&w1_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&w2_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&output_index, image_size * image_size * 2 * sizeof(float));
 	cudaMalloc((void**)&pixel_ind, image_size * image_size * 2 * sizeof(float));
 	
 	cudaMemcpy(Vis_real, Visreal, num_baselines * 1 * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(Vis_imag, Visimag, num_baselines * 1 * sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(B_in, Bin, num_baselines * 2 * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(B_in, Bin, num_baselines * 3 * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(V_in, Vin, 3 * 3 * sizeof(float), cudaMemcpyHostToDevice); // cross term included
 	cudaMemset(dirty, 0, image_size * image_size * sizeof(float));
 	cudaMemset(dirty_pre, 0, image_size * image_size * sizeof(float));
 	cudaMemset(conv_corr_kernel, 0, (image_size/2+1) * sizeof(float));
-	cudaMemset(w_grid_stack_real, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(w_grid_stack_imag, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(w0_grid_real, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(w0_grid_imag, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(w1_grid_real, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(w1_grid_imag, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(w2_grid_real, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(w2_grid_imag, 0, grid_size * grid_size * sizeof(float));
 	cudaMemset(output_index, 0, image_size * image_size * 2 * sizeof(float));
 
 	cudaStatus = cudaDeviceSynchronize();
@@ -562,7 +578,12 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	/* ****************************************************** */
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
-	gridding<<<num_blocks,num_threads,0,stream1>>>(B_in, w_grid_stack_real, w_grid_stack_imag, Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
+	gridding<<<num_blocks,num_threads,0,stream1>>>(
+            B_in,
+			w0_grid_real, w0_grid_imag,
+			w1_grid_real, w1_grid_imag,
+			w2_grid_real, w2_grid_imag,
+			Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
 	cudaError = cudaGetLastError();
 	if(cudaError != cudaSuccess){
 		printf("ERROR! GPU Kernel 4 error.\n");
