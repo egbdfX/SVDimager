@@ -599,24 +599,65 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	else {
 		printf("No CUDA error 4.\n");
 	}
-	
-	/* ****************************************************** */
-	num_threads = 1024;
-	num_blocks = computeCeil(static_cast<float>(grid_size * grid_size)/num_threads);
-	combineToComplex<<<num_blocks,num_threads,0,stream1>>>(w_grid_stack_real, w_grid_stack_imag, w_grid_stack, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 5 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 5.\n");
-	}
-	
-	/* ****************************************************** */
+
+
+    /* ****************************************************** */
 	num_threads = 32;
 	dim3 numThreads(num_threads, num_threads);
 	dim3 numBlocks(computeCeil(static_cast<float>(grid_size)/num_threads), computeCeil(static_cast<float>(grid_size)/num_threads));
+	cufftHandle plan0, plan1, plan2;
+	cufftCreate(&plan0);
+    cufftCreate(&plan1);
+    cufftCreate(&plan2);
+	cufftSetStream(plan0, stream_fft0);
+    cufftSetStream(plan1, stream_fft1);
+    cufftSetStream(plan2, stream_fft2);
+	cufftPlan2d(&plan0, grid_size, grid_size, CUFFT_C2C);
+    cufftPlan2d(&plan1, grid_size, grid_size, CUFFT_C2C);
+    cufftPlan2d(&plan2, grid_size, grid_size, CUFFT_C2C);
+
+    cudaEvent_t fft_ready, fft_done0, fft_done1, fft_done2;
+	cudaEventCreate(&fft_ready);
+	cudaEventCreate(&fft_done0);
+	cudaEventCreate(&fft_done1);
+	cudaEventCreate(&fft_done2);
+
+	cudaEventRecord(fft_ready, stream1);
+	cudaStreamWaitEvent(stream_fft0, fft_ready, 0);
+	cudaStreamWaitEvent(stream_fft1, fft_ready, 0);
+	cudaStreamWaitEvent(stream_fft2, fft_ready, 0);
+
+	num_threads = 1024;
+	num_blocks = computeCeil(static_cast<float>(grid_size * grid_size)/num_threads);
+	combineToComplex<<<num_blocks,num_threads,0,stream_fft0>>>(w0_grid_real, w0_grid_imag, w0_grid_stack, grid_size);
+	cudaError = cudaGetLastError();
+	if(cudaError != cudaSuccess){
+		printf("ERROR! GPU Kernel 5.0 error.\n");
+		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
+	}
+	else {
+		printf("No CUDA error 5.0.\n");
+	}
+    combineToComplex<<<num_blocks,num_threads,0,stream_fft1>>>(w1_grid_real, w1_grid_imag, w1_grid_stack, grid_size);
+	cudaError = cudaGetLastError();
+	if(cudaError != cudaSuccess){
+		printf("ERROR! GPU Kernel 5.1 error.\n");
+		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
+	}
+	else {
+		printf("No CUDA error 5.1.\n");
+	}
+    combineToComplex<<<num_blocks,num_threads,0,stream_fft2>>>(w2_grid_real, w2_grid_imag, w2_grid_stack, grid_size);
+	cudaError = cudaGetLastError();
+	if(cudaError != cudaSuccess){
+		printf("ERROR! GPU Kernel 5.2 error.\n");
+		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
+	}
+	else {
+		printf("No CUDA error 5.2.\n");
+	}
+	
+	/* ****************************************************** */
 	ifftShift<<<numBlocks,numThreads,0,stream1>>>(w_grid_stack, w_grid_stack_shifted, grid_size, grid_size);
 	cudaError = cudaGetLastError();
 	if(cudaError != cudaSuccess){
@@ -628,10 +669,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	}
     
 	/* ****************************************************** */
-	cufftHandle plan;
-	cufftCreate(&plan);
-	cufftSetStream(plan, stream1);
-	cufftPlan2d(&plan, grid_size, grid_size, CUFFT_C2C);
+
 
 	cufftExecC2C(plan, w_grid_stack_shifted, w_grid_stack_shifted, CUFFT_INVERSE);
 	cudaError = cudaGetLastError();
