@@ -544,7 +544,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	else {
 		printf("No CUDA error 1.\n");
 	}
-	cudaStream_t stream1, stream2, stream_fft0, stream_fft1, stream_fft;
+	cudaStream_t stream1, stream2, stream_fft0, stream_fft1, stream_fft2;
 	cudaStreamCreate(&stream1);
 	cudaStreamCreate(&stream2);
 	cudaStreamCreate(&stream_fft0);
