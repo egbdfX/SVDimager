@@ -243,12 +243,12 @@ __global__ void gridding(float* B_in, float* r_grid_real, float* r_grid_imag, fl
 	}
 }
 
-__global__ void combineToComplex(float* w_real, float* w_imag, cufftComplex* complex_data, size_t grid_size) {
+__global__ void combineToComplex(float* data_real, float* data_imag, cufftComplex* complex_data, size_t grid_size) {
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 	size_t size = grid_size * grid_size;
 	if (idx < size) {
-		complex_data[idx].x = w_real[idx];
-		complex_data[idx].y = w_imag[idx];
+		complex_data[idx].x = data_real[idx];
+		complex_data[idx].y = data_imag[idx];
 	}
 }
 
@@ -266,7 +266,7 @@ __global__ void ifftShift(cufftComplex* data, cufftComplex* data_shifted, size_t
 	}
 }
 
-__global__ void accumulation(float* dirty_pre, cufftComplex* w_grid_stack_shifted, size_t image_size, size_t grid_size) {
+__global__ void accumulation(float* dirty_pre, cufftComplex* r_grid_stack_shifted, size_t image_size, size_t grid_size) {
 	size_t half_image_size = image_size / 2;
 	size_t grid_index_offset_image_centre = grid_size*grid_size/2 + grid_size/2;
 	size_t image_index_offset_image_centre = half_image_size*image_size + half_image_size;
@@ -276,11 +276,11 @@ __global__ void accumulation(float* dirty_pre, cufftComplex* w_grid_stack_shifte
 	if (idx < image_size && idy < image_size) { 
 		idx = idx - half_image_size;
 		idy = idy - half_image_size;
-		float pixel_sum = w_grid_stack_shifted[grid_index_offset_image_centre + idy*grid_size + idx].x;
+		float pixel_sum = r_grid_stack_shifted[grid_index_offset_image_centre + idy*grid_size + idx].x;
 		if (((abs(idx)+abs(idy)) & 1) != 0) {
 			pixel_sum = - pixel_sum;
 		}
-		dirty_pre[image_index_offset_image_centre + idy*image_size + idx] += pixel_sum;
+		dirty_pre[image_index_offset_image_centre + idy*image_size + idx] = pixel_sum;
 	}
 }
 
@@ -437,10 +437,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	float* conv_corr_kernel;
 	float* r_grid_real;
 	float* r_grid_imag;
-	float* pixel_ind;
 	cudaError_t cudaStatus;
-	cufftComplex* w_grid_stack;
-	cufftComplex* w_grid_stack_shifted;
+	cufftComplex* r_grid_stack;
+	cufftComplex* r_grid_stack_shifted;
 	float* output_index;
 	cudaError_t cudaError;
 	
@@ -462,10 +461,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float));
 	cudaMalloc((void**)&r_grid_real, grid_size * grid_size * sizeof(float));
 	cudaMalloc((void**)&r_grid_imag, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&w_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&w_grid_stack_shifted, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&r_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
+	cudaMalloc((void**)&r_grid_stack_shifted, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&output_index, image_size * image_size * 2 * sizeof(float));
-	cudaMalloc((void**)&pixel_ind, image_size * image_size * 2 * sizeof(float));
 	
 	cudaMemcpy(Vis_real, Visreal, num_baselines * 1 * sizeof(float), cudaMemcpyHostToDevice);
 	cudaMemcpy(Vis_imag, Visimag, num_baselines * 1 * sizeof(float), cudaMemcpyHostToDevice);
@@ -480,16 +478,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "Error 1 : %s\n", cudaGetErrorString(cudaStatus));
+		fprintf(stderr, "Error sync 1 : %s\n", cudaGetErrorString(cudaStatus));
 	}
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 1 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 1.\n");
-	}
+	
 	cudaStream_t stream1, stream2;
 	cudaStreamCreate(&stream1);
 	cudaStreamCreate(&stream2);
@@ -499,14 +490,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	size_t num_threads = 1024;
 	size_t num_blocks = computeCeil(static_cast<float>(image_size/2+1)/num_threads);
 	convolveKernel<<<num_blocks,num_threads,0,stream2>>>(conv_corr_kernel, image_size, grid_size, conv_corr_norm_factor);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 2 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 2.\n");
-	}
 	
 	float inten_scale = std::abs(Vin[0*3+0]*Vin[1*3+1]-Vin[0*3+1]*Vin[1*3+0]);
 	
@@ -514,54 +497,22 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
 	computeVisWeighted<<<num_blocks,num_threads,0,stream1>>>(Vis_real,Vis_imag,num_baselines,inten_scale);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 3 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 3.\n");
-	}
 	
 	/* ****************************************************** */
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
 	gridding<<<num_blocks,num_threads,0,stream1>>>(B_in, r_grid_real, r_grid_imag, Vis_real, Vis_imag, r1r2_scale, grid_size, num_baselines);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 4 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 4.\n");
-	}
 	
 	/* ****************************************************** */
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(grid_size * grid_size)/num_threads);
-	combineToComplex<<<num_blocks,num_threads,0,stream1>>>(r_grid_real, r_grid_imag, w_grid_stack, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 5 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 5.\n");
-	}
+	combineToComplex<<<num_blocks,num_threads,0,stream1>>>(r_grid_real, r_grid_imag, r_grid_stack, grid_size);
 	
 	/* ****************************************************** */
 	num_threads = 32;
 	dim3 numThreads(num_threads, num_threads);
 	dim3 numBlocks(computeCeil(static_cast<float>(grid_size)/num_threads), computeCeil(static_cast<float>(grid_size)/num_threads));
-	ifftShift<<<numBlocks,numThreads,0,stream1>>>(w_grid_stack, w_grid_stack_shifted, grid_size, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 6 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 6.\n");
-	}
+	ifftShift<<<numBlocks,numThreads,0,stream1>>>(r_grid_stack, r_grid_stack_shifted, grid_size, grid_size);
     
 	/* ****************************************************** */
 	cufftHandle plan;
@@ -569,30 +520,14 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cufftSetStream(plan, stream1);
 	cufftPlan2d(&plan, grid_size, grid_size, CUFFT_C2C);
 
-	cufftExecC2C(plan, w_grid_stack_shifted, w_grid_stack_shifted, CUFFT_INVERSE);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 7 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 7.\n");
-	}
+	cufftExecC2C(plan, r_grid_stack_shifted, r_grid_stack_shifted, CUFFT_INVERSE);
 	
 	/* ****************************************************** */
 	numThreads.x = num_threads;
 	numThreads.y = num_threads;
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
-	accumulation<<<numBlocks,numThreads,0,stream1>>>(dirty_pre, w_grid_stack_shifted, image_size, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 8 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 8.\n");
-	}
+	accumulation<<<numBlocks,numThreads,0,stream1>>>(dirty_pre, r_grid_stack_shifted, image_size, grid_size);
     
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -600,14 +535,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	scaling<<<numBlocks,numThreads,0,stream1>>>(dirty_pre, conv_corr_kernel, image_size, conv_corr_norm_factor);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 9 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 9.\n");
-	}
 	
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -615,14 +542,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	coordschange<<<numBlocks,numThreads,0,stream2>>>(output_index, V_in, image_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 10 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 10.\n");
-	}
 	
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -630,14 +549,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	p2p<<<numBlocks,numThreads,0,stream2>>>(output_index, V_in, cell_size, image_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 11 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 11.\n");
-	}
 	
 	cudaEventRecord(eventstream,stream2);
 	
@@ -649,14 +560,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	finalinterp<<<numBlocks,numThreads,0,stream1>>>(output_index, dirty_pre, dirty, image_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 14 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 14.\n");
-	}
 	
 	cudaStreamSynchronize(stream1);
 	
@@ -675,15 +578,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMemcpy(dirty_image, dirty, image_size * image_size * sizeof(float), cudaMemcpyDeviceToHost);
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "Error 15 : %s\n", cudaGetErrorString(cudaStatus));
-	}
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 15 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 15.\n");
+		fprintf(stderr, "Error sync 2 : %s\n", cudaGetErrorString(cudaStatus));
 	}
 	
 	cudaFree(Vis_real);
@@ -695,8 +590,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaFree(conv_corr_kernel);
 	cudaFree(r_grid_real);
 	cudaFree(r_grid_imag);
-	cudaFree(w_grid_stack);
-	cudaFree(w_grid_stack_shifted);
+	cudaFree(r_grid_stack);
+	cudaFree(r_grid_stack_shifted);
 	cudaFree(output_index);
 	
 	return 0;
