@@ -534,16 +534,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "Error 1 : %s\n", cudaGetErrorString(cudaStatus));
+		fprintf(stderr, "Error sync 1 : %s\n", cudaGetErrorString(cudaStatus));
 	}
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 1 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 1.\n");
-	}
+	
 	cudaStream_t stream1, stream2, stream_fft0, stream_fft1, stream_fft2;
 	cudaStreamCreate(&stream1);
 	cudaStreamCreate(&stream2);
@@ -556,14 +549,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	size_t num_threads = 1024;
 	size_t num_blocks = computeCeil(static_cast<float>(image_size/2+1)/num_threads);
 	convolveKernel<<<num_blocks,num_threads,0,stream2>>>(conv_corr_kernel, image_size, grid_size, conv_corr_norm_factor);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 2 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 2.\n");
-	}
 	
 	float inten_scale = std::abs(Vin[0*3+0]*Vin[1*3+1]-Vin[0*3+1]*Vin[1*3+0]);
 	
@@ -571,14 +556,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
 	computeVisWeighted<<<num_blocks,num_threads,0,stream1>>>(Vis_real,Vis_imag,num_baselines,inten_scale);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 3 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 3.\n");
-	}
 	
 	/* ****************************************************** */
 	num_threads = 1024;
@@ -589,16 +566,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 			rr1_grid_real, rr1_grid_imag,
 			rr2_grid_real, rr2_grid_imag,
 			Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 4 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 4.\n");
-	}
-
-
+	
     /* ****************************************************** */
 	num_threads = 32;
 	dim3 numThreads(num_threads, num_threads);
@@ -628,32 +596,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(grid_size * grid_size)/num_threads);
 	combineToComplex<<<num_blocks,num_threads,0,stream_fft0>>>(rr0_grid_real, rr0_grid_imag, rr0_grid_stack, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 5.0 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 5.0.\n");
-	}
     combineToComplex<<<num_blocks,num_threads,0,stream_fft1>>>(rr1_grid_real, rr1_grid_imag, rr1_grid_stack, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 5.1 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 5.1.\n");
-	}
     combineToComplex<<<num_blocks,num_threads,0,stream_fft2>>>(rr2_grid_real, rr2_grid_imag, rr2_grid_stack, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 5.2 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 5.2.\n");
-	}
 	
 	/* ****************************************************** */
 	num_threads = 32;
@@ -662,63 +606,15 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(grid_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(grid_size)/num_threads);
     ifftShift<<<numBlocks,numThreads,0,stream_fft0>>>(rr0_grid_stack, rr0_grid_shifted, grid_size, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 6.0 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 6.0.\n");
-	}
     ifftShift<<<numBlocks,numThreads,0,stream_fft1>>>(rr1_grid_stack, rr1_grid_shifted, grid_size, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 6.1 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 6.1.\n");
-	}
     ifftShift<<<numBlocks,numThreads,0,stream_fft2>>>(rr2_grid_stack, rr2_grid_shifted, grid_size, grid_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 6.2 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 6.2.\n");
-	}
     
 	/* ****************************************************** */
 	cufftExecC2C(plan0, rr0_grid_shifted, rr0_grid_shifted, CUFFT_INVERSE);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 7.0 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 7.0.\n");
-	}
     cudaEventRecord(fft_done0, stream_fft0);
     cufftExecC2C(plan1, rr1_grid_shifted, rr1_grid_shifted, CUFFT_INVERSE);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 7.1 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 7.1.\n");
-	}
     cudaEventRecord(fft_done1, stream_fft1);
     cufftExecC2C(plan2, rr2_grid_shifted, rr2_grid_shifted, CUFFT_INVERSE);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 7.2 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 7.2.\n");
-	}
     cudaEventRecord(fft_done2, stream_fft2);
 
 	cudaStreamWaitEvent(stream1, fft_done0, 0);
@@ -733,14 +629,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	accumulation<<<numBlocks,numThreads,0,stream1>>>(
             dirty_pre, rr0_grid_shifted, rr1_grid_shifted, rr2_grid_shifted, V_in,
 			image_size, grid_size, cell_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 8 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 8.\n");
-	}
     
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -748,14 +636,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	scaling<<<numBlocks,numThreads,0,stream1>>>(dirty_pre, conv_corr_kernel, image_size, conv_corr_norm_factor);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 9 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 9.\n");
-	}
 	
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -763,14 +643,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	coordschange<<<numBlocks,numThreads,0,stream2>>>(output_index, V_in, image_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 10 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 10.\n");
-	}
 	
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -778,14 +650,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	p2p<<<numBlocks,numThreads,0,stream2>>>(output_index, V_in, cell_size, image_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 11 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 11.\n");
-	}
 	
 	cudaEventRecord(eventstream,stream2);
 	
@@ -797,14 +661,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	finalinterp<<<numBlocks,numThreads,0,stream1>>>(output_index, dirty_pre, dirty, image_size);
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 14 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 14.\n");
-	}
 	
 	cudaStreamSynchronize(stream1);
 
@@ -833,15 +689,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMemcpy(dirty_image, dirty, image_size * image_size * sizeof(float), cudaMemcpyDeviceToHost);
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "Error 15 : %s\n", cudaGetErrorString(cudaStatus));
-	}
-	cudaError = cudaGetLastError();
-	if(cudaError != cudaSuccess){
-		printf("ERROR! GPU Kernel 15 error.\n");
-		printf("CUDA error code: %d; string: %s;\n", (int) cudaError, cudaGetErrorString(cudaError));
-	}
-	else {
-		printf("No CUDA error 15.\n");
+		fprintf(stderr, "Error sync 2 : %s\n", cudaGetErrorString(cudaStatus));
 	}
 	
 	cudaFree(Vis_real);
