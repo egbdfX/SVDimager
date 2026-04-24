@@ -193,13 +193,13 @@ __global__ void computeVisWeighted(float *Vis_real, float *Vis_imag, size_t num_
 	}
 }
 
-__global__ void gridding(float* B_in, float* w_grid_stack_real, float* w_grid_stack_imag, float* Vis_real, float* Vis_imag, float uv_scale, size_t grid_size, size_t num_baselines) {
+__global__ void gridding(float* B_in, float* r_grid_real, float* r_grid_imag, float* Vis_real, float* Vis_imag, float r1r2_scale, size_t grid_size, size_t num_baselines) {
 	const int support = 8;
 	int half_support = support / 2;
 	float inv_half_support = 1 / static_cast<float>(half_support);
-	long int grid_min_uv = -static_cast<long int>(grid_size) / 2;
-	long int grid_max_uv = (static_cast<long int>(grid_size) - 1) / 2;
-	long int origin_offset_uv = static_cast<long int>(grid_size) / 2;
+	long int grid_min_r1r2 = -static_cast<long int>(grid_size) / 2;
+	long int grid_max_r1r2 = (static_cast<long int>(grid_size) - 1) / 2;
+	long int origin_offset_r1r2 = static_cast<long int>(grid_size) / 2;
 	const int KERNEL_SUPPORT_BOUND = 16;
 	const float beta = 15.3704324328;
 	float kernel_value;
@@ -207,37 +207,37 @@ __global__ void gridding(float* B_in, float* w_grid_stack_real, float* w_grid_st
 	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	if (idx < num_baselines) {
-		float pos_u = B_in[idx*2+0] * uv_scale;
-		float pos_v = B_in[idx*2+1] * uv_scale;
-		long int grid_u_min = max(ceil_device(pos_u - half_support), grid_min_uv);
-		long int grid_u_max = min(floor_device(pos_u + half_support), grid_max_uv);
-		long int grid_v_min = max(ceil_device(pos_v - half_support), grid_min_uv);
-		long int grid_v_max = min(floor_device(pos_v + half_support), grid_max_uv);
-		if (grid_u_min > grid_u_max || grid_v_min > grid_v_max) {
+		float pos_r1 = B_in[idx*2+0] * r1r2_scale;
+		float pos_r2 = B_in[idx*2+1] * r1r2_scale;
+		long int grid_r1_min = max(ceil_device(pos_r1 - half_support), grid_min_r1r2);
+		long int grid_r1_min = min(floor_device(pos_r1 + half_support), grid_max_r1r2);
+		long int grid_r2_min = max(ceil_device(pos_r2 - half_support), grid_min_r1r2);
+		long int grid_r2_min = min(floor_device(pos_r2 + half_support), grid_max_r1r2);
+		if (grid_r1_min > grid_r1_min || grid_r2_min > grid_r2_min) {
 			return;
 		}
-		float kernel_u[KERNEL_SUPPORT_BOUND], kernel_v[KERNEL_SUPPORT_BOUND];
-		for (long int grid_u = grid_u_min; grid_u <= grid_u_max; grid_u++)
+		float kernel_r1[KERNEL_SUPPORT_BOUND], kernel_r2[KERNEL_SUPPORT_BOUND];
+		for (long int grid_r1 = grid_r1_min; grid_r1 <= grid_r1_min; grid_r1++)
 		{
-			kernel_u[grid_u - grid_u_min] = exp_semicircle(beta,(static_cast<float>(grid_u) - pos_u) * inv_half_support);
+			kernel_r1[grid_r1 - grid_r1_min] = exp_semicircle(beta,(static_cast<float>(grid_r1) - pos_r1) * inv_half_support);
 		}
-		for (long int grid_v = grid_v_min; grid_v <= grid_v_max; grid_v++)
+		for (long int grid_r2 = grid_r2_min; grid_r2 <= grid_r2_min; grid_r2++)
 		{
-			kernel_v[grid_v - grid_v_min] = exp_semicircle(beta,(static_cast<float>(grid_v) - pos_v) * inv_half_support);
+			kernel_r2[grid_r2 - grid_r2_min] = exp_semicircle(beta,(static_cast<float>(grid_r2) - pos_r2) * inv_half_support);
 		}
 		
-		for (long int grid_u = grid_u_min; grid_u <= grid_u_max; grid_u++)
+		for (long int grid_r1 = grid_r1_min; grid_r1 <= grid_r1_min; grid_r1++)
 		{
-			for (long int grid_v = grid_v_min; grid_v <= grid_v_max; grid_v++)
+			for (long int grid_r2 = grid_r2_min; grid_r2 <= grid_r2_min; grid_r2++)
 			{
-				kernel_value = kernel_u[grid_u - grid_u_min] * kernel_v[grid_v - grid_v_min];
-				if (((grid_u + grid_v) & 1) != 0) {
+				kernel_value = kernel_r1[grid_r1 - grid_r1_min] * kernel_r2[grid_r2 - grid_r2_min];
+				if (((grid_r1 + grid_r2) & 1) != 0) {
 					kernel_value = -kernel_value;
 				}
-				const long int grid_offset_uvw = (grid_u + origin_offset_uv) * static_cast<long int>(grid_size) + (grid_v + origin_offset_uv);
+				const long int grid_offset_r1r2r3 = (grid_r1 + origin_offset_r1r2) * static_cast<long int>(grid_size) + (grid_r2 + origin_offset_r1r2);
                         
-				atomicAdd(&w_grid_stack_real[grid_offset_uvw],Vis_real[idx] * kernel_value);
-				atomicAdd(&w_grid_stack_imag[grid_offset_uvw],Vis_imag[idx] * kernel_value);
+				atomicAdd(&r_grid_real[grid_offset_r1r2r3],Vis_real[idx] * kernel_value);
+				atomicAdd(&r_grid_imag[grid_offset_r1r2r3],Vis_imag[idx] * kernel_value);
 			}
 		}
 	}
@@ -435,8 +435,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	float* dirty;
 	float* dirty_pre;
 	float* conv_corr_kernel;
-	float* w_grid_stack_real;
-	float* w_grid_stack_imag;
+	float* r_grid_real;
+	float* r_grid_imag;
 	float* pixel_ind;
 	cudaError_t cudaStatus;
 	cufftComplex* w_grid_stack;
@@ -450,7 +450,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaEventCreate(&eventstream);
 	
 	size_t grid_size = computeCeil(1.5*static_cast<float>(image_size));
-	float uv_scale = cell_size*grid_size;
+	float r1r2_scale = cell_size*grid_size;
 	float conv_corr_norm_factor = 2.4937047051153827;
 	
 	cudaMalloc((void**)&Vis_real, num_baselines * 1 * sizeof(float));
@@ -460,8 +460,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMalloc((void**)&dirty, image_size * image_size * sizeof(float));
 	cudaMalloc((void**)&dirty_pre, image_size * image_size * sizeof(float));
 	cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float));
-	cudaMalloc((void**)&w_grid_stack_real, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&w_grid_stack_imag, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&r_grid_real, grid_size * grid_size * sizeof(float));
+	cudaMalloc((void**)&r_grid_imag, grid_size * grid_size * sizeof(float));
 	cudaMalloc((void**)&w_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&w_grid_stack_shifted, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&output_index, image_size * image_size * 2 * sizeof(float));
@@ -474,8 +474,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMemset(dirty, 0, image_size * image_size * sizeof(float));
 	cudaMemset(dirty_pre, 0, image_size * image_size * sizeof(float));
 	cudaMemset(conv_corr_kernel, 0, (image_size/2+1) * sizeof(float));
-	cudaMemset(w_grid_stack_real, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(w_grid_stack_imag, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(r_grid_real, 0, grid_size * grid_size * sizeof(float));
+	cudaMemset(r_grid_imag, 0, grid_size * grid_size * sizeof(float));
 	cudaMemset(output_index, 0, image_size * image_size * 2 * sizeof(float));
 
 	cudaStatus = cudaDeviceSynchronize();
@@ -526,7 +526,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	/* ****************************************************** */
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
-	gridding<<<num_blocks,num_threads,0,stream1>>>(B_in, w_grid_stack_real, w_grid_stack_imag, Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
+	gridding<<<num_blocks,num_threads,0,stream1>>>(B_in, r_grid_real, r_grid_imag, Vis_real, Vis_imag, r1r2_scale, grid_size, num_baselines);
 	cudaError = cudaGetLastError();
 	if(cudaError != cudaSuccess){
 		printf("ERROR! GPU Kernel 4 error.\n");
@@ -539,7 +539,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	/* ****************************************************** */
 	num_threads = 1024;
 	num_blocks = computeCeil(static_cast<float>(grid_size * grid_size)/num_threads);
-	combineToComplex<<<num_blocks,num_threads,0,stream1>>>(w_grid_stack_real, w_grid_stack_imag, w_grid_stack, grid_size);
+	combineToComplex<<<num_blocks,num_threads,0,stream1>>>(r_grid_real, r_grid_imag, w_grid_stack, grid_size);
 	cudaError = cudaGetLastError();
 	if(cudaError != cudaSuccess){
 		printf("ERROR! GPU Kernel 5 error.\n");
@@ -693,8 +693,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaFree(dirty);
 	cudaFree(dirty_pre);
 	cudaFree(conv_corr_kernel);
-	cudaFree(w_grid_stack_real);
-	cudaFree(w_grid_stack_imag);
+	cudaFree(r_grid_real);
+	cudaFree(r_grid_imag);
 	cudaFree(w_grid_stack);
 	cudaFree(w_grid_stack_shifted);
 	cudaFree(output_index);
