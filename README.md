@@ -1,6 +1,6 @@
 # Transient-Oriented Imager (TOI)
 
-We have developed a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in radio astronomy. While it is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. This imager supports flag-based data correction, frequency-dependent weighting (via the WEIGHT_SPECTRUM column), and multi-frequency synthesis (MFS). Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
+We develop a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in radio astronomy. Fast Imaging is a technique to detect and localise celestial transients (e.g., pulsars, fast radio bursts) in image-frequency domain. While TOI is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. This imager supports flag-based data correction, frequency-dependent weighting (via the WEIGHT_SPECTRUM column), and multi-frequency synthesis (MFS). Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
 
 ## User guidance
 
@@ -21,10 +21,17 @@ Run the code by executing the following command:
 
 ```./sharedlibrary_gpu Visreal_input.fits Visimag_input.fits B_input.fits V_input.fits Image_Size Number_of_Rows Cell_Size Output_Name.fits```.
 
-Here, **Visreal_input.fits**, **Visimag_input.fits**, **B_input.fits**, and **V_input.fits** are the input files (in FITS format) corresponding to the real components of visibilities, the imagery components of visibilities, the (centred) SVDed baseline matrix, and the V matrix in the SVD, respectively. The remaining arguments are as their names suggest, where **Image_Size** is an integer (e.g., if you input 100, it means the image size is $100 \times 100$ pixels), **Number_of_Rows = Number_of_Baselines * Number_of_Frequency_Channels** is an integer, **Cell_Size** is in units of radians, and the last argument is the name of the output file which should end with '.fits'.
+Here, **Visreal_input.fits**, **Visimag_input.fits**, **B_input.fits**, and **V_input.fits** are the input files (in FITS format) corresponding to the real components of visibilities, the imagery components of visibilities, the (centred) SVDed baseline matrix, and the V matrix in the SVD, respectively. The remaining arguments are as their names suggest, where **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels), **Number_of_Rows = Number_of_Baselines * Number_of_Frequency_Channels** is an integer, **Cell_Size** is in units of radians, and the last argument is the name of the output file which should end with '.fits'.
 
 **Step 4:**
 The code will output a FITS file named **Output_Name.fits** (as user defined), which is the output snapshot. It can be opened by SAOImageDS9, Fv or MATLAB etc.
+
+## Branches in this repo
+**main** -- 3D imaging (more accurate);
+
+**coplanar-demo** -- 2D approximation (applicable for most use cases);
+
+**single-channel-demo** -- single-channel solution (for test).
 
 ## Contact
 If you have any questions or need further assistance, please feel free to contact at [egbdfmusic1@gmail.com](mailto:egbdfmusic1@gmail.com).
