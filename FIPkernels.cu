@@ -210,25 +210,25 @@ __global__ void gridding(float* B_in, float* r_grid_real, float* r_grid_imag, fl
 		float pos_r1 = B_in[idx*2+0] * r1r2_scale;
 		float pos_r2 = B_in[idx*2+1] * r1r2_scale;
 		long int grid_r1_min = max(ceil_device(pos_r1 - half_support), grid_min_r1r2);
-		long int grid_r1_min = min(floor_device(pos_r1 + half_support), grid_max_r1r2);
+		long int grid_r1_max = min(floor_device(pos_r1 + half_support), grid_max_r1r2);
 		long int grid_r2_min = max(ceil_device(pos_r2 - half_support), grid_min_r1r2);
-		long int grid_r2_min = min(floor_device(pos_r2 + half_support), grid_max_r1r2);
-		if (grid_r1_min > grid_r1_min || grid_r2_min > grid_r2_min) {
+		long int grid_r2_max = min(floor_device(pos_r2 + half_support), grid_max_r1r2);
+		if (grid_r1_min > grid_r1_max || grid_r2_min > grid_r2_max) {
 			return;
 		}
 		float kernel_r1[KERNEL_SUPPORT_BOUND], kernel_r2[KERNEL_SUPPORT_BOUND];
-		for (long int grid_r1 = grid_r1_min; grid_r1 <= grid_r1_min; grid_r1++)
+		for (long int grid_r1 = grid_r1_min; grid_r1 <= grid_r1_max; grid_r1++)
 		{
 			kernel_r1[grid_r1 - grid_r1_min] = exp_semicircle(beta,(static_cast<float>(grid_r1) - pos_r1) * inv_half_support);
 		}
-		for (long int grid_r2 = grid_r2_min; grid_r2 <= grid_r2_min; grid_r2++)
+		for (long int grid_r2 = grid_r2_min; grid_r2 <= grid_r2_max; grid_r2++)
 		{
 			kernel_r2[grid_r2 - grid_r2_min] = exp_semicircle(beta,(static_cast<float>(grid_r2) - pos_r2) * inv_half_support);
 		}
 		
-		for (long int grid_r1 = grid_r1_min; grid_r1 <= grid_r1_min; grid_r1++)
+		for (long int grid_r1 = grid_r1_min; grid_r1 <= grid_r1_max; grid_r1++)
 		{
-			for (long int grid_r2 = grid_r2_min; grid_r2 <= grid_r2_min; grid_r2++)
+			for (long int grid_r2 = grid_r2_min; grid_r2 <= grid_r2_max; grid_r2++)
 			{
 				kernel_value = kernel_r1[grid_r1 - grid_r1_min] * kernel_r2[grid_r2 - grid_r2_min];
 				if (((grid_r1 + grid_r2) & 1) != 0) {
