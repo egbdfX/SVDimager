@@ -548,9 +548,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 			Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
 	
     /* ****************************************************** */
-	num_threads = 32;
-	dim3 numThreads(num_threads, num_threads);
-	dim3 numBlocks(computeCeil(static_cast<float>(grid_size)/num_threads), computeCeil(static_cast<float>(grid_size)/num_threads));
 	cufftHandle plan0, plan1, plan2;
 	cufftCreate(&plan0);
     cufftCreate(&plan1);
@@ -593,10 +590,8 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 
 	/* ****************************************************** */
 	num_threads = 32;
-	numThreads.x = num_threads;
-	numThreads.y = num_threads;
-	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
-	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
+	dim3 numThreads(num_threads, num_threads);
+	dim3 numBlocks(computeCeil(static_cast<float>(image_size)/num_threads), computeCeil(static_cast<float>(image_size)/num_threads));
 	accumulation<<<numBlocks,numThreads,0,stream1>>>(
             dirty_pre, rr0_grid_stack, rr1_grid_stack, rr2_grid_stack, V_in,
 			image_size, grid_size, cell_size);
