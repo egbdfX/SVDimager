@@ -264,20 +264,6 @@ __global__ void combineToComplex(float* data_real, float* data_imag, cufftComple
 	}
 }
 
-__global__ void ifftShift(cufftComplex* data, cufftComplex* data_shifted, size_t NX, size_t NY) {
-	size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-	size_t idy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (idx < NX && idy < NY) {
-		size_t new_x = (idx + NX / 2) % NX;
-		size_t new_y = (idy + NY / 2) % NY;
-		size_t old_id = idy * NX + idx;
-		size_t new_id = new_y * NX + new_x;
-        
-		data_shifted[new_id] = data[old_id];
-	}
-}
-
 __global__ void accumulation(float* dirty_pre,
 		const cufftComplex* moment0_shifted,
 		const cufftComplex* moment1_shifted,
@@ -481,9 +467,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cufftComplex* rr0_grid_stack;
 	cufftComplex* rr1_grid_stack;
 	cufftComplex* rr2_grid_stack;
-	cufftComplex* rr0_grid_shifted;
-	cufftComplex* rr1_grid_shifted;
-	cufftComplex* rr2_grid_shifted;
 	float* output_index;
 	cudaError_t cudaError;
 	
@@ -512,9 +495,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMalloc((void**)&rr0_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&rr1_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&rr2_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&rr0_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&rr1_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&rr2_grid_shifted, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&output_index, image_size * image_size * 2 * sizeof(float));
 	
 	cudaMemcpy(Vis_real, Visreal, num_baselines * 1 * sizeof(float), cudaMemcpyHostToDevice);
@@ -598,23 +578,13 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	combineToComplex<<<num_blocks,num_threads,0,stream_fft0>>>(rr0_grid_real, rr0_grid_imag, rr0_grid_stack, grid_size);
     combineToComplex<<<num_blocks,num_threads,0,stream_fft1>>>(rr1_grid_real, rr1_grid_imag, rr1_grid_stack, grid_size);
     combineToComplex<<<num_blocks,num_threads,0,stream_fft2>>>(rr2_grid_real, rr2_grid_imag, rr2_grid_stack, grid_size);
-	
-	/* ****************************************************** */
-	num_threads = 32;
-	numThreads.x = num_threads;
-	numThreads.y = num_threads;
-	numBlocks.x = computeCeil(static_cast<float>(grid_size)/num_threads);
-	numBlocks.y = computeCeil(static_cast<float>(grid_size)/num_threads);
-    ifftShift<<<numBlocks,numThreads,0,stream_fft0>>>(rr0_grid_stack, rr0_grid_shifted, grid_size, grid_size);
-    ifftShift<<<numBlocks,numThreads,0,stream_fft1>>>(rr1_grid_stack, rr1_grid_shifted, grid_size, grid_size);
-    ifftShift<<<numBlocks,numThreads,0,stream_fft2>>>(rr2_grid_stack, rr2_grid_shifted, grid_size, grid_size);
     
 	/* ****************************************************** */
-	cufftExecC2C(plan0, rr0_grid_shifted, rr0_grid_shifted, CUFFT_INVERSE);
+	cufftExecC2C(plan0, rr0_grid_stack, rr0_grid_stack, CUFFT_INVERSE);
     cudaEventRecord(fft_done0, stream_fft0);
-    cufftExecC2C(plan1, rr1_grid_shifted, rr1_grid_shifted, CUFFT_INVERSE);
+    cufftExecC2C(plan1, rr1_grid_stack, rr1_grid_stack, CUFFT_INVERSE);
     cudaEventRecord(fft_done1, stream_fft1);
-    cufftExecC2C(plan2, rr2_grid_shifted, rr2_grid_shifted, CUFFT_INVERSE);
+    cufftExecC2C(plan2, rr2_grid_stack, rr2_grid_stack, CUFFT_INVERSE);
     cudaEventRecord(fft_done2, stream_fft2);
 
 	cudaStreamWaitEvent(stream1, fft_done0, 0);
@@ -622,12 +592,13 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaStreamWaitEvent(stream1, fft_done2, 0);
 
 	/* ****************************************************** */
+	num_threads = 32;
 	numThreads.x = num_threads;
 	numThreads.y = num_threads;
 	numBlocks.x = computeCeil(static_cast<float>(image_size)/num_threads);
 	numBlocks.y = computeCeil(static_cast<float>(image_size)/num_threads);
 	accumulation<<<numBlocks,numThreads,0,stream1>>>(
-            dirty_pre, rr0_grid_shifted, rr1_grid_shifted, rr2_grid_shifted, V_in,
+            dirty_pre, rr0_grid_stack, rr1_grid_stack, rr2_grid_stack, V_in,
 			image_size, grid_size, cell_size);
     
 	/* ****************************************************** */
@@ -708,9 +679,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaFree(rr0_grid_stack);
 	cudaFree(rr1_grid_stack);
 	cudaFree(rr2_grid_stack);
-	cudaFree(rr0_grid_shifted);
-	cudaFree(rr1_grid_shifted);
-	cudaFree(rr2_grid_shifted);
 	cudaFree(output_index);
 	
 	return 0;
