@@ -2,8 +2,6 @@ import casacore.tables as tables
 import scipy.io
 import numpy
 from sklearn.decomposition import PCA
-from mat4py import loadmat
-import scipy.io
 from astropy.io import fits
 
 C = 299792458
