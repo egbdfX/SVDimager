@@ -41,14 +41,6 @@ long int computeCeil(float num) {
 	}
 }
 
-long int computeFloor(float num) {
-	if (num<0) {
-		return -ceilf(-num);
-	} else {
-		return floorf(num);
-	}
-}
-
 __device__ long int ceil_device(float num) {
 	if (num<0) {
 		return -floorf(-num);
@@ -63,10 +55,6 @@ __device__ long int floor_device(float num) {
 	} else {
 		return floorf(num);
 	}
-}
-
-__device__ float fmod_device(float x, float y) {
-	return fmod(x, y);
 }
 
 __device__ float exp_semicircle(const float beta, float x){
@@ -735,8 +723,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMemcpy(V_in, Vin, 3 * 3 * sizeof(float), cudaMemcpyHostToDevice); // cross term included
 	cudaMemset(dirty, 0, image_size * image_size * sizeof(float));
 	cudaMemset(dirty_pre, 0, image_size * image_size * sizeof(float));
-	cudaMemset(conv_corr_kernel, 0, (image_size/2+1) * sizeof(float));
-	cudaMemset(output_index, 0, image_size * image_size * 2 * sizeof(float));
 
 	const HostChebyshevSelection cheb_selection = cheb_future.get();
 	const float r3_min = cheb_selection.r3_min;
@@ -810,7 +796,23 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	
     /* ****************************************************** */
 	cufftHandle plan;
-	cufftPlan2d(&plan, grid_size, grid_size, CUFFT_C2C);
+	int fft_dims[2] = {
+		static_cast<int>(grid_size),
+		static_cast<int>(grid_size)
+	};
+	cufftPlanMany(
+			&plan,
+			2,
+			fft_dims,
+			nullptr,
+			1,
+			static_cast<int>(moment_plane_size),
+			nullptr,
+			1,
+			static_cast<int>(moment_plane_size),
+			CUFFT_C2C,
+			active_cheb_terms
+	);
 	cufftSetStream(plan, stream_fft);
 
     cudaEvent_t fft_ready, fft_done;
@@ -825,14 +827,7 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	combineToComplex<<<num_blocks,num_threads,0,stream_fft>>>(moment_grid_real, moment_grid_imag, moment_grid_stack, total_moment_size);
     
 	/* ****************************************************** */
-	for (int term = 0; term < active_cheb_terms; ++term) {
-		cufftExecC2C(
-				plan,
-				moment_grid_stack + static_cast<size_t>(term) * moment_plane_size,
-				moment_grid_stack + static_cast<size_t>(term) * moment_plane_size,
-				CUFFT_INVERSE
-		);
-	}
+	cufftExecC2C(plan, moment_grid_stack, moment_grid_stack, CUFFT_INVERSE);
     cudaEventRecord(fft_done, stream_fft);
 	cudaStreamWaitEvent(stream1, fft_done, 0);
 
