@@ -473,11 +473,10 @@ __global__ void combineToComplex(float* data_real, float* data_imag, cufftComple
 }
 
 __global__ void accumulation(float* dirty_pre,
-		const cufftComplex* moment0_shifted,
-		const cufftComplex* moment1_shifted,
-		const cufftComplex* moment2_shifted,
+		const cufftComplex* moment_shifted,
 		const float* V_in,
-		size_t image_size, size_t grid_size, float cell_size) {
+		size_t image_size, size_t grid_size, float cell_size,
+		float r3_centre, float r3_half_range, int num_terms) {
 	size_t half_image_size = image_size / 2;
 	size_t grid_index_offset_image_centre = grid_size*grid_size/2 + grid_size/2;
 	size_t image_index_offset_image_centre = half_image_size*image_size + half_image_size;
@@ -499,14 +498,47 @@ __global__ void accumulation(float* dirty_pre,
 		}
         const float branch_sign = (v33 >= 0.0f) ? 1.0f : -1.0f;
         const float t3 = -v33 + branch_sign * sqrtf(root_arg);
+
+		const float alpha = 2.0f * M_PI * t3 * r3_half_range;
+		const float beta = 2.0f * M_PI * t3 * r3_centre;
+		const float cb = cosf(beta);
+		const float sb = sinf(beta);
+		float jvals[CHEB_MAX_MOMENTS];
+		bessel_sequence(alpha, num_terms - 1, jvals);
+
+		float pixel_sum = 0.0f;
+		for (int term = 0; term < num_terms; ++term) {
+			const size_t slice_offset = static_cast<size_t>(term) * grid_size * grid_size;
+			cufftComplex moment = moment_shifted[slice_offset + grid_index_offset_image_centre + idy * grid_size + idx];
+			float coeff_r = 0.0f;
+			float coeff_i = 0.0f;
+			if (term == 0) {
+				coeff_r = cb * jvals[term];
+				coeff_i = sb * jvals[term];
+			} else {
+				const float amplitude = 2.0f * jvals[term];
+				switch (term & 3) {
+					case 0:
+						coeff_r =  amplitude * cb;
+						coeff_i =  amplitude * sb;
+						break;
+					case 1:
+						coeff_r = -amplitude * sb;
+						coeff_i =  amplitude * cb;
+						break;
+					case 2:
+						coeff_r = -amplitude * cb;
+						coeff_i = -amplitude * sb;
+						break;
+					default:
+						coeff_r =  amplitude * sb;
+						coeff_i = -amplitude * cb;
+						break;
+				}
+			}
+			pixel_sum += real_complex_product(coeff_r, coeff_i, moment);
+		}
         
-        float phase = 2.0f * M_PI * t3;
-		float phase_sq = phase * phase;
-		cufftComplex m0 = moment0_shifted[grid_index_offset_image_centre + idy * grid_size + idx];
-		cufftComplex m1 = moment1_shifted[grid_index_offset_image_centre + idy * grid_size + idx];
-		cufftComplex m2 = moment2_shifted[grid_index_offset_image_centre + idy * grid_size + idx];
-        
-        float pixel_sum = m0.x - phase * m1.y - 0.5f * phase_sq * m2.x;
 		if (((abs(idx)+abs(idy)) & 1) != 0) {
 			pixel_sum = - pixel_sum;
 		}
@@ -664,18 +696,11 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	float* dirty;
 	float* dirty_pre;
 	float* conv_corr_kernel;
-	float* rr0_grid_real;
-	float* rr0_grid_imag;
-	float* rr1_grid_real;
-	float* rr1_grid_imag;
-	float* rr2_grid_real;
-	float* rr2_grid_imag;
+	float* moment_grid_real;
+	float* moment_grid_imag;
 	cudaError_t cudaStatus;
-	cufftComplex* rr0_grid_stack;
-	cufftComplex* rr1_grid_stack;
-	cufftComplex* rr2_grid_stack;
+	cufftComplex* moment_grid_stack;
 	float* output_index;
-	cudaError_t cudaError;
 	
 	cudaEvent_t start, stop, eventstream;
 	cudaEventCreate(&start);
@@ -683,8 +708,17 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaEventCreate(&eventstream);
 	
 	size_t grid_size = computeCeil(1.5*static_cast<float>(image_size));
-	float uv_scale = cell_size*grid_size;
-	float conv_corr_norm_factor = 2.4937047051153827;
+	const float uv_scale = cell_size * grid_size;
+	const float conv_corr_norm_factor = 2.4937047051153827f;
+	auto cheb_future = std::async(
+			std::launch::async,
+			compute_host_chebyshev_selection,
+			Bin,
+			Vin,
+			num_baselines,
+			image_size,
+			cell_size
+	);
 	
 	cudaMalloc((void**)&Vis_real, num_baselines * 1 * sizeof(float));
 	cudaMalloc((void**)&Vis_imag, num_baselines * 1 * sizeof(float));
@@ -693,15 +727,6 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMalloc((void**)&dirty, image_size * image_size * sizeof(float));
 	cudaMalloc((void**)&dirty_pre, image_size * image_size * sizeof(float));
 	cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float));
-	cudaMalloc((void**)&rr0_grid_real, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&rr0_grid_imag, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&rr1_grid_real, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&rr1_grid_imag, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&rr2_grid_real, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&rr2_grid_imag, grid_size * grid_size * sizeof(float));
-	cudaMalloc((void**)&rr0_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&rr1_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
-	cudaMalloc((void**)&rr2_grid_stack, grid_size * grid_size * sizeof(cufftComplex));
 	cudaMalloc((void**)&output_index, image_size * image_size * 2 * sizeof(float));
 	
 	cudaMemcpy(Vis_real, Visreal, num_baselines * 1 * sizeof(float), cudaMemcpyHostToDevice);
@@ -711,25 +736,55 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaMemset(dirty, 0, image_size * image_size * sizeof(float));
 	cudaMemset(dirty_pre, 0, image_size * image_size * sizeof(float));
 	cudaMemset(conv_corr_kernel, 0, (image_size/2+1) * sizeof(float));
-	cudaMemset(rr0_grid_real, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(rr0_grid_imag, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(rr1_grid_real, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(rr1_grid_imag, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(rr2_grid_real, 0, grid_size * grid_size * sizeof(float));
-	cudaMemset(rr2_grid_imag, 0, grid_size * grid_size * sizeof(float));
 	cudaMemset(output_index, 0, image_size * image_size * 2 * sizeof(float));
+
+	const HostChebyshevSelection cheb_selection = cheb_future.get();
+	const float r3_min = cheb_selection.r3_min;
+	const float r3_max = cheb_selection.r3_max;
+	const float r3_centre = cheb_selection.r3_centre;
+	const float r3_half_range = cheb_selection.r3_half_range;
+	const float inv_r3_half_range = cheb_selection.inv_r3_half_range;
+	const float max_abs_t3 = cheb_selection.max_abs_t3;
+	const size_t valid_pixels = cheb_selection.valid_pixels;
+	const float alpha_max = cheb_selection.alpha_max;
+	const int active_cheb_terms = cheb_selection.selected_cheb_terms;
+	const float selected_cheb_sample = cheb_selection.selected_cheb_sample;
+	const size_t moment_plane_size = grid_size * grid_size;
+	const size_t total_moment_size = static_cast<size_t>(active_cheb_terms) * moment_plane_size;
+
+	std::cout << "Chebyshev range check:\n";
+	std::cout << "  r3 interval = [" << r3_min << ", " << r3_max << "] wavelengths\n";
+	std::cout << "  r3 centre   = " << r3_centre << " wavelengths\n";
+	std::cout << "  r3 halfspan = " << r3_half_range << " wavelengths\n";
+	std::cout << "  max |t3|    = " << max_abs_t3 << " over " << valid_pixels << " valid pixels\n";
+	std::cout << "  alpha_max   = 2*pi*max|t3|*r3_halfspan = " << alpha_max << "\n";
+	std::cout << "  target sampled max error            = " << CHEB_TARGET_ERROR << "\n";
+	std::cout << "  selected kept terms                 = " << active_cheb_terms
+		<< " (keep T0..T" << (active_cheb_terms - 1) << ")\n";
+	std::cout << "  selected sampled max error          = " << selected_cheb_sample << "\n";
+	if (selected_cheb_sample < CHEB_TARGET_ERROR) {
+		std::cout << "  Status: workable (sampled error < target)\n";
+	} else if (selected_cheb_sample < 5.0f * CHEB_TARGET_ERROR) {
+		std::cout << "  Status: marginal (sampled error between target and 5x target)\n";
+	} else {
+		std::cout << "  Status: not safe within configured max terms on this dataset\n";
+	}
+
+	cudaMalloc((void**)&moment_grid_real, total_moment_size * sizeof(float));
+	cudaMalloc((void**)&moment_grid_imag, total_moment_size * sizeof(float));
+	cudaMalloc((void**)&moment_grid_stack, total_moment_size * sizeof(cufftComplex));
+	cudaMemset(moment_grid_real, 0, total_moment_size * sizeof(float));
+	cudaMemset(moment_grid_imag, 0, total_moment_size * sizeof(float));
 
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "Error sync 1 : %s\n", cudaGetErrorString(cudaStatus));
 	}
 	
-	cudaStream_t stream1, stream2, stream_fft0, stream_fft1, stream_fft2;
+	cudaStream_t stream1, stream2, stream_fft;
 	cudaStreamCreate(&stream1);
 	cudaStreamCreate(&stream2);
-	cudaStreamCreate(&stream_fft0);
-	cudaStreamCreate(&stream_fft1);
-	cudaStreamCreate(&stream_fft2);
+	cudaStreamCreate(&stream_fft);
 	
 	cudaEventRecord(start);
 	/* ****************************************************** */
@@ -749,59 +804,45 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	num_blocks = computeCeil(static_cast<float>(num_baselines)/num_threads);
 	gridding<<<num_blocks,num_threads,0,stream1>>>(
             B_in,
-			rr0_grid_real, rr0_grid_imag,
-			rr1_grid_real, rr1_grid_imag,
-			rr2_grid_real, rr2_grid_imag,
-			Vis_real, Vis_imag, uv_scale, grid_size, num_baselines);
+			moment_grid_real, moment_grid_imag,
+			Vis_real, Vis_imag, uv_scale, grid_size, num_baselines,
+			r3_centre, inv_r3_half_range, active_cheb_terms);
 	
     /* ****************************************************** */
-	cufftHandle plan0, plan1, plan2;
-	cufftCreate(&plan0);
-    cufftCreate(&plan1);
-    cufftCreate(&plan2);
-	cufftSetStream(plan0, stream_fft0);
-    cufftSetStream(plan1, stream_fft1);
-    cufftSetStream(plan2, stream_fft2);
-	cufftPlan2d(&plan0, grid_size, grid_size, CUFFT_C2C);
-    cufftPlan2d(&plan1, grid_size, grid_size, CUFFT_C2C);
-    cufftPlan2d(&plan2, grid_size, grid_size, CUFFT_C2C);
+	cufftHandle plan;
+	cufftPlan2d(&plan, grid_size, grid_size, CUFFT_C2C);
+	cufftSetStream(plan, stream_fft);
 
-    cudaEvent_t fft_ready, fft_done0, fft_done1, fft_done2;
+    cudaEvent_t fft_ready, fft_done;
 	cudaEventCreate(&fft_ready);
-	cudaEventCreate(&fft_done0);
-	cudaEventCreate(&fft_done1);
-	cudaEventCreate(&fft_done2);
+	cudaEventCreate(&fft_done);
 
 	cudaEventRecord(fft_ready, stream1);
-	cudaStreamWaitEvent(stream_fft0, fft_ready, 0);
-	cudaStreamWaitEvent(stream_fft1, fft_ready, 0);
-	cudaStreamWaitEvent(stream_fft2, fft_ready, 0);
+	cudaStreamWaitEvent(stream_fft, fft_ready, 0);
 
 	num_threads = 1024;
-	num_blocks = computeCeil(static_cast<float>(grid_size * grid_size)/num_threads);
-	combineToComplex<<<num_blocks,num_threads,0,stream_fft0>>>(rr0_grid_real, rr0_grid_imag, rr0_grid_stack, grid_size);
-    combineToComplex<<<num_blocks,num_threads,0,stream_fft1>>>(rr1_grid_real, rr1_grid_imag, rr1_grid_stack, grid_size);
-    combineToComplex<<<num_blocks,num_threads,0,stream_fft2>>>(rr2_grid_real, rr2_grid_imag, rr2_grid_stack, grid_size);
+	num_blocks = computeCeil(static_cast<float>(total_moment_size)/num_threads);
+	combineToComplex<<<num_blocks,num_threads,0,stream_fft>>>(moment_grid_real, moment_grid_imag, moment_grid_stack, total_moment_size);
     
 	/* ****************************************************** */
-	cufftExecC2C(plan0, rr0_grid_stack, rr0_grid_stack, CUFFT_INVERSE);
-    cudaEventRecord(fft_done0, stream_fft0);
-    cufftExecC2C(plan1, rr1_grid_stack, rr1_grid_stack, CUFFT_INVERSE);
-    cudaEventRecord(fft_done1, stream_fft1);
-    cufftExecC2C(plan2, rr2_grid_stack, rr2_grid_stack, CUFFT_INVERSE);
-    cudaEventRecord(fft_done2, stream_fft2);
-
-	cudaStreamWaitEvent(stream1, fft_done0, 0);
-	cudaStreamWaitEvent(stream1, fft_done1, 0);
-	cudaStreamWaitEvent(stream1, fft_done2, 0);
+	for (int term = 0; term < active_cheb_terms; ++term) {
+		cufftExecC2C(
+				plan,
+				moment_grid_stack + static_cast<size_t>(term) * moment_plane_size,
+				moment_grid_stack + static_cast<size_t>(term) * moment_plane_size,
+				CUFFT_INVERSE
+		);
+	}
+    cudaEventRecord(fft_done, stream_fft);
+	cudaStreamWaitEvent(stream1, fft_done, 0);
 
 	/* ****************************************************** */
 	num_threads = 32;
 	dim3 numThreads(num_threads, num_threads);
 	dim3 numBlocks(computeCeil(static_cast<float>(image_size)/num_threads), computeCeil(static_cast<float>(image_size)/num_threads));
 	accumulation<<<numBlocks,numThreads,0,stream1>>>(
-            dirty_pre, rr0_grid_stack, rr1_grid_stack, rr2_grid_stack, V_in,
-			image_size, grid_size, cell_size);
+            dirty_pre, moment_grid_stack, V_in,
+			image_size, grid_size, cell_size, r3_centre, r3_half_range, active_cheb_terms);
     
 	/* ****************************************************** */
 	numThreads.x = num_threads;
@@ -837,19 +878,13 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	
 	cudaStreamSynchronize(stream1);
 
-	cufftDestroy(plan0);
-	cufftDestroy(plan1);
-	cufftDestroy(plan2);
+	cufftDestroy(plan);
 	cudaEventDestroy(fft_ready);
-	cudaEventDestroy(fft_done0);
-	cudaEventDestroy(fft_done1);
-	cudaEventDestroy(fft_done2);
+	cudaEventDestroy(fft_done);
 	cudaEventDestroy(eventstream);
 	cudaStreamDestroy(stream1);
 	cudaStreamDestroy(stream2);
-    cudaStreamDestroy(stream_fft0);
-	cudaStreamDestroy(stream_fft1);
-	cudaStreamDestroy(stream_fft2);
+    cudaStreamDestroy(stream_fft);
 
 	cudaEventRecord(stop);
 	cudaEventSynchronize(stop);
@@ -872,15 +907,9 @@ int FIpipe(float* Visreal, float* Visimag, float* Bin, float* Vin, float* dirty_
 	cudaFree(dirty);
 	cudaFree(dirty_pre);
 	cudaFree(conv_corr_kernel);
-	cudaFree(rr0_grid_real);
-	cudaFree(rr0_grid_imag);
-	cudaFree(rr1_grid_real);
-	cudaFree(rr1_grid_imag);
-	cudaFree(rr2_grid_real);
-	cudaFree(rr2_grid_imag);
-	cudaFree(rr0_grid_stack);
-	cudaFree(rr1_grid_stack);
-	cudaFree(rr2_grid_stack);
+	cudaFree(moment_grid_real);
+	cudaFree(moment_grid_imag);
+	cudaFree(moment_grid_stack);
 	cudaFree(output_index);
 	
 	return 0;
