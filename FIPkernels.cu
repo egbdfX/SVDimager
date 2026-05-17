@@ -2,12 +2,17 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <cmath>
+#include <complex>
+#include <future>
+#include <vector>
 #include <cufft.h>
 #include <device_launch_parameters.h>
 #include <math_constants.h>
 
 #define M_PI 3.14159265358979323846
 #define WCSTRIG_TOL 1e-10
+#define CHEB_MAX_MOMENTS 32
+#define CHEB_TARGET_ERROR 1.0e-2f
 
 /* The gridding kernels are developed based on SKA SDP (https://gitlab.com/ska-telescope/sdp/ska-sdp-func). */
 
@@ -170,6 +175,208 @@ __device__ float __asind(float v) {
 	}
 }
 
+__device__ void chebyshev_sequence(float s, int num_terms, float* values) {
+	if (num_terms <= 0) {
+		return;
+	}
+	values[0] = 1.0f;
+	if (num_terms == 1) {
+		return;
+	}
+
+	values[1] = s;
+	for (int n = 2; n < num_terms; ++n) {
+		values[n] = 2.0f * s * values[n - 1] - values[n - 2];
+	}
+}
+
+__device__ void bessel_sequence(float alpha, int max_order, float* jvals) {
+	if (max_order < 0) {
+		return;
+	}
+
+	const float half_alpha = 0.5f * alpha;
+	const float quarter_alpha_sq = half_alpha * half_alpha;
+	for (int n = 0; n <= max_order; ++n) {
+		float term = 1.0f;
+		for (int m = 1; m <= n; ++m) {
+			term *= half_alpha / static_cast<float>(m);
+		}
+
+		float sum = term;
+		for (int k = 1; k < 32; ++k) {
+			term *= -quarter_alpha_sq / (static_cast<float>(k) * static_cast<float>(n + k));
+			sum += term;
+			if (fabsf(term) < 1.0e-7f * (1.0f + fabsf(sum))) {
+				break;
+			}
+		}
+		jvals[n] = sum;
+	}
+}
+
+__device__ float real_complex_product(float ar, float ai, cufftComplex z) {
+	return ar * z.x - ai * z.y;
+}
+
+double host_chebyshev_t(int n, double s) {
+	if (n == 0) {
+		return 1.0;
+	}
+	if (n == 1) {
+		return s;
+	}
+
+	double tnm2 = 1.0;
+	double tnm1 = s;
+	for (int k = 2; k <= n; ++k) {
+		const double tn = 2.0 * s * tnm1 - tnm2;
+		tnm2 = tnm1;
+		tnm1 = tn;
+	}
+	return tnm1;
+}
+
+void host_bessel_sequence(double alpha, int max_order, std::vector<double>& jvals) {
+	if (max_order < 0) {
+		jvals.clear();
+		return;
+	}
+
+	jvals.assign(max_order + 1, 0.0);
+	for (int n = 0; n <= max_order; ++n) {
+		jvals[n] = std::cyl_bessel_j(static_cast<double>(n), alpha);
+	}
+}
+
+std::complex<double> host_chebyshev_phase_approx(double alpha, double s, int kept_terms) {
+	std::vector<double> jvals;
+	host_bessel_sequence(alpha, kept_terms - 1, jvals);
+
+	std::complex<double> sum(0.0, 0.0);
+	for (int n = 0; n < kept_terms; ++n) {
+		const double tn = host_chebyshev_t(n, s);
+		if (n == 0) {
+			sum += std::complex<double>(jvals[n] * tn, 0.0);
+			continue;
+		}
+
+		std::complex<double> phase(1.0, 0.0);
+		switch (n & 3) {
+			case 0:
+				phase = std::complex<double>(1.0, 0.0);
+				break;
+			case 1:
+				phase = std::complex<double>(0.0, 1.0);
+				break;
+			case 2:
+				phase = std::complex<double>(-1.0, 0.0);
+				break;
+			default:
+				phase = std::complex<double>(0.0, -1.0);
+				break;
+		}
+		sum += 2.0 * phase * jvals[n] * tn;
+	}
+	return sum;
+}
+
+float host_chebyshev_error_sample(float alpha, int kept_terms) {
+	const int sample_count = 2048;
+	double max_err = 0.0;
+
+	for (int i = 0; i < sample_count; ++i) {
+		const double s = -1.0 + 2.0 * static_cast<double>(i) / static_cast<double>(sample_count - 1);
+		const std::complex<double> exact = std::exp(std::complex<double>(0.0, static_cast<double>(alpha) * s));
+		const std::complex<double> approx = host_chebyshev_phase_approx(static_cast<double>(alpha), s, kept_terms);
+
+		max_err = std::max(max_err, std::abs(exact - approx));
+	}
+
+	return static_cast<float>(max_err);
+}
+
+float host_chebyshev_error_sample_range(float alpha_max, int kept_terms, int alpha_samples = 513) {
+	float max_err = 0.0f;
+	for (int i = 0; i < alpha_samples; ++i) {
+		const float alpha = (alpha_samples == 1)
+			? alpha_max
+			: alpha_max * static_cast<float>(i) / static_cast<float>(alpha_samples - 1);
+		max_err = std::max(max_err, host_chebyshev_error_sample(alpha, kept_terms));
+	}
+	return max_err;
+}
+
+int host_find_min_chebyshev_terms(float alpha_max, float target_error, int max_kept_terms = 32) {
+	for (int kept_terms = 1; kept_terms <= max_kept_terms; ++kept_terms) {
+		if (host_chebyshev_error_sample_range(alpha_max, kept_terms) <= target_error) {
+			return kept_terms;
+		}
+	}
+	return -1;
+}
+
+struct HostChebyshevSelection {
+	float r3_min = 0.0f;
+	float r3_max = 0.0f;
+	float r3_centre = 0.0f;
+	float r3_half_range = 1.0e-6f;
+	float inv_r3_half_range = 1.0e6f;
+	float max_abs_t3 = 0.0f;
+	size_t valid_pixels = 0;
+	float alpha_max = 0.0f;
+	int selected_cheb_terms = CHEB_MAX_MOMENTS;
+	float selected_cheb_sample = 0.0f;
+};
+
+HostChebyshevSelection compute_host_chebyshev_selection(
+		const float* Bin,
+		const float* Vin,
+		size_t num_baselines,
+		size_t image_size,
+		float cell_size
+) {
+	HostChebyshevSelection result;
+	result.r3_min = Bin[2];
+	result.r3_max = Bin[2];
+	for (size_t i = 1; i < num_baselines; ++i) {
+		const float r3 = Bin[i * 3 + 2];
+		result.r3_min = fminf(result.r3_min, r3);
+		result.r3_max = fmaxf(result.r3_max, r3);
+	}
+
+	result.r3_centre = 0.5f * (result.r3_max + result.r3_min);
+	result.r3_half_range = fmaxf(0.5f * (result.r3_max - result.r3_min), 1.0e-6f);
+	result.inv_r3_half_range = 1.0f / result.r3_half_range;
+
+	const float v13 = Vin[0 * 3 + 2];
+	const float v23 = Vin[1 * 3 + 2];
+	const float v33 = Vin[2 * 3 + 2];
+	const float branch_sign = (v33 >= 0.0f) ? 1.0f : -1.0f;
+	const float half_image_size = static_cast<float>(image_size) / 2.0f;
+	for (size_t y = 0; y < image_size; ++y) {
+		const float t1 = cell_size * (static_cast<float>(y) - half_image_size);
+		for (size_t x = 0; x < image_size; ++x) {
+			const float t2 = cell_size * (static_cast<float>(x) - half_image_size);
+			const float root_arg = 1.0f - (t1 + v13) * (t1 + v13) - (t2 + v23) * (t2 + v23);
+			if (root_arg < 0.0f) {
+				continue;
+			}
+			const float t3 = -v33 + branch_sign * sqrtf(root_arg);
+			result.max_abs_t3 = fmaxf(result.max_abs_t3, fabsf(t3));
+			++result.valid_pixels;
+		}
+	}
+
+	result.alpha_max = 2.0f * M_PI * result.max_abs_t3 * result.r3_half_range;
+	const int selected = host_find_min_chebyshev_terms(
+			result.alpha_max, CHEB_TARGET_ERROR, CHEB_MAX_MOMENTS);
+	result.selected_cheb_terms = (selected > 0) ? selected : CHEB_MAX_MOMENTS;
+	result.selected_cheb_sample = host_chebyshev_error_sample_range(
+			result.alpha_max, result.selected_cheb_terms);
+	return result;
+}
+
 __global__ void convolveKernel(float *conv_corr_kernel, size_t image_size, size_t grid_size, float conv_corr_norm_factor) {
 	const int support = 8;
 	size_t t1_t2 = blockIdx.x * blockDim.x + threadIdx.x;
@@ -194,11 +401,10 @@ __global__ void computeVisWeighted(float *Vis_real, float *Vis_imag, size_t num_
 }
 
 __global__ void gridding(float* B_in,
-		float* r30_grid_real, float* r30_grid_imag,
-		float* r31_grid_real, float* r31_grid_imag,
-		float* r32_grid_real, float* r32_grid_imag,
+		float* moment_grids_real, float* moment_grids_imag,
 		float* Vis_real, float* Vis_imag,
-		float r1r2_scale, size_t grid_size, size_t num_baselines) {
+		float r1r2_scale, size_t grid_size, size_t num_baselines,
+		float r3_centre, float inv_r3_half_range, int num_terms) {
 	
     const int support = 8;
 	int half_support = support / 2;
@@ -216,7 +422,10 @@ __global__ void gridding(float* B_in,
 		float pos_r1 = B_in[idx*3+0] * r1r2_scale;
 		float pos_r2 = B_in[idx*3+1] * r1r2_scale;
         float r3 = B_in[idx*3+2];
-		float r32 = r3 * r3;
+		float s = (r3 - r3_centre) * inv_r3_half_range;
+		s = fminf(1.0f, fmaxf(-1.0f, s));
+		float cheb_values[CHEB_MAX_MOMENTS];
+		chebyshev_sequence(s, num_terms, cheb_values);
 		long int grid_r1_min = max(ceil_device(pos_r1 - half_support), grid_min_r1r2);
 		long int grid_r1_max = min(floor_device(pos_r1 + half_support), grid_max_r1r2);
 		long int grid_r2_min = max(ceil_device(pos_r2 - half_support), grid_min_r1r2);
@@ -243,13 +452,12 @@ __global__ void gridding(float* B_in,
 					kernel_value = -kernel_value;
 				}
 				const long int grid_offset_r1r2r3 = (grid_r1 + origin_offset_r1r2) * static_cast<long int>(grid_size) + (grid_r2 + origin_offset_r1r2);
-                        
-				atomicAdd(&r30_grid_real[grid_offset_r1r2r3], Vis_real[idx] * kernel_value);
-				atomicAdd(&r30_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * kernel_value);
-				atomicAdd(&r31_grid_real[grid_offset_r1r2r3], Vis_real[idx] * r3 * kernel_value);
-				atomicAdd(&r31_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * r3 * kernel_value);
-				atomicAdd(&r32_grid_real[grid_offset_r1r2r3], Vis_real[idx] * r32 * kernel_value);
-				atomicAdd(&r32_grid_imag[grid_offset_r1r2r3], Vis_imag[idx] * r32 * kernel_value);
+                for (int term = 0; term < num_terms; ++term) {
+					const size_t slice_offset = static_cast<size_t>(term) * grid_size * grid_size;
+					const float weight = cheb_values[term] * kernel_value;
+					atomicAdd(&moment_grids_real[slice_offset + grid_offset_r1r2r3], Vis_real[idx] * weight);
+					atomicAdd(&moment_grids_imag[slice_offset + grid_offset_r1r2r3], Vis_imag[idx] * weight);
+				}
 			}
 		}
 	}
