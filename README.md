@@ -1,6 +1,6 @@
 # Transient-Oriented Imager (TOI)
 
-We develop a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in radio astronomy. Fast Imaging is a technique to detect and localise celestial transients (e.g., pulsars, fast radio bursts) in image-frequency domain. While TOI is a core component of the Fast Imaging Pipeline for transient detection, it can also function as a standalone imager, independent of the full pipeline. This imager supports flag-based data correction, frequency-dependent weighting (via the WEIGHT_SPECTRUM column), and multi-frequency synthesis (MFS). Please see our paper in Section [Reference](https://github.com/egbdfX/SVDimager/tree/main#reference) for more information.
+This is the 2D branch of the Transient-Oriented Imager (TOI). Please see more information about this software in the main branch.
 
 ## User guidance
 
