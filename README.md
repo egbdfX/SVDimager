@@ -11,7 +11,7 @@ Make sure GCCcore, CUDA, CASACORE, and CFITSIO are available.
 make CUDA_ARCH=?
 ./svd_integrated_imager_gpu Measurement_Set.ms image_size cell_size Output_Name.fits
 ```
-where **CUDA_ARCH=?** needs to match your GPU hardware, **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels) and **Cell_Size** is in units of radians.
+where **CUDA_ARCH=?** needs to match your GPU hardware (e.g., CUDA_ARCH=80 for A100), **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels) and **Cell_Size** is in units of radians.
 
 ### Archive
 
