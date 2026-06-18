@@ -11,7 +11,7 @@ Run ```python SVD_MFS.py``` to generate inputs from per-time-slot Measurement Se
 ### Running the Imager
 
 **Step 1:**
-Make sure GCCcore, CUDA, and CFITSIO are avaiable. If you see a warning saying ```/usr/bin/ld.gold: warning: /apps/system/easybuild/software/GCCcore/11.2.0/lib/gcc/x86_64-pc-linux-gnu/11.2.0/crtbegin.o: unknown program property type 0xc0010002 in .note.gnu.property section```, you would need to make sure Python is also available.
+Make sure GCCcore, CUDA, CASACORE, and CFITSIO are avaiable. If you see a warning saying ```/usr/bin/ld.gold: warning: /apps/system/easybuild/software/GCCcore/11.2.0/lib/gcc/x86_64-pc-linux-gnu/11.2.0/crtbegin.o: unknown program property type 0xc0010002 in .note.gnu.property section```, you would need to make sure Python is also available.
 
 **Step 2:**
 Run the Makefile by ```make```. Ensure the CUDA architecture flags (```arch=compute_xx,code=sm_xx```) match your GPU hardware.
