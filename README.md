@@ -1,6 +1,6 @@
 # Transient-Oriented Imager (TOI)
 
-This is the 2D branch of the Transient-Oriented Imager (TOI). Please see more information about this software in the main branch.
+This is the 2D branch of the Transient-Oriented Imager (TOI). Please see more information about this software in the [main branch](https://github.com/egbdfX/SVDimager/tree/main).
 
 ## User guidance
 
