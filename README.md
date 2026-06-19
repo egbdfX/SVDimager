@@ -4,14 +4,21 @@ We develop a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in
 
 ## User guidance
 
-### Input Generation
+### Latest Release
+Make sure GCCcore, CUDA, CASACORE, and CFITSIO are available.
+```
+make CUDA_ARCH=?
+./svd_integrated_imager_gpu MeasurementSet.ms Image_Size Cell_Size Output_Name.fits
+```
+where **CUDA_ARCH=?** needs to match your GPU hardware (e.g., CUDA_ARCH=80 for A100), **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels), and **Cell_Size** is in units of radians.
 
-Run ```python SVD_MFS.py``` to generate inputs from per-time-slot Measurement Sets. Adjust the number of loops to read multiple Measurement Sets.
+### Archive
 
-### Running the Imager
+**Step 0:** 
+Input Generation. Run ```python SVD_MFS.py``` to generate inputs from per-time-slot Measurement Sets. Adjust the number of loops to read multiple Measurement Sets.
 
 **Step 1:**
-Make sure GCCcore, CUDA, CASACORE, and CFITSIO are avaiable. If you see a warning saying ```/usr/bin/ld.gold: warning: /apps/system/easybuild/software/GCCcore/11.2.0/lib/gcc/x86_64-pc-linux-gnu/11.2.0/crtbegin.o: unknown program property type 0xc0010002 in .note.gnu.property section```, you would need to make sure Python is also available.
+Make sure GCCcore, CUDA, CASACORE, and CFITSIO are available. If you see a warning saying ```/usr/bin/ld.gold: warning: /apps/system/easybuild/software/GCCcore/11.2.0/lib/gcc/x86_64-pc-linux-gnu/11.2.0/crtbegin.o: unknown program property type 0xc0010002 in .note.gnu.property section```, you would need to make sure Python is also available.
 
 **Step 2:**
 Run the Makefile by ```make```. Ensure the CUDA architecture flags (```arch=compute_xx,code=sm_xx```) match your GPU hardware.
