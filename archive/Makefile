@@ -10,7 +10,7 @@ GCC := g++
 NVCC := $(CUDA_HOME)/bin/nvcc
 
 GCC_OPTS :=-O3 -fPIC -Wall -Wextra $(INC) -std=c++11
-NVCCFLAGS :=-O3 -gencode arch=compute_90,code=sm_90 --ptxas-options=-v -Xcompiler -fPIC -Xcompiler -Wextra -lineinfo $(INC) --use_fast_math
+NVCCFLAGS :=-O3 -gencode arch=compute_80,code=sm_80 --ptxas-options=-v -Xcompiler -fPIC -Xcompiler -Wextra -lineinfo $(INC) --use_fast_math
 
 all: clean sharedlibrary_gpu
 
