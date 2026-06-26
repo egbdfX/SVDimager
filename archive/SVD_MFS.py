@@ -7,7 +7,7 @@ from astropy.io import fits
 C = 299792458
 
 for ind in range(1):
-    vis = tables.table('PSR'+str(ind)+'.ms', readonly = False)
+    vis = tables.table('../../singlecentre_snap0.ms', readonly = False)
     num_rows = vis.nrows()
     
     vis_data = vis.getcol('DATA', 0, num_rows)
