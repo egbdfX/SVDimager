@@ -472,17 +472,17 @@ __global__ void align_pca_signs_kernel(
 ) {
     if (blockIdx.x == 0 && threadIdx.x == 0) {
         for (int component = 0; component < 2; ++component) {
-            int max_axis = 0;
-            float max_value = fabsf(basis_row_major[component * 3 + 0]);
-            for (int axis = 1; axis < 3; ++axis) {
-                const float candidate = fabsf(basis_row_major[component * 3 + axis]);
+            std::size_t max_sample = 0;
+            float max_value = fabsf(bin_row_major[component]);
+            for (std::size_t sample = 1; sample < num_samples; ++sample) {
+                const float candidate = fabsf(bin_row_major[sample * 2 + component]);
                 if (candidate > max_value) {
                     max_value = candidate;
-                    max_axis = axis;
+                    max_sample = sample;
                 }
             }
 
-            if (basis_row_major[component * 3 + max_axis] < 0.0f) {
+            if (bin_row_major[max_sample * 2 + component] < 0.0f) {
                 for (int axis = 0; axis < 3; ++axis) {
                     basis_row_major[component * 3 + axis] = -basis_row_major[component * 3 + axis];
                     vin_row_major[component * 3 + axis] = -vin_row_major[component * 3 + axis];
