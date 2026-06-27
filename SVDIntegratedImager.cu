@@ -459,35 +459,40 @@ __global__ void project_bin_kernel(
 }
 
 __global__ void align_pca_signs_kernel(
-    float* basis_row_major,
-    float* vin_row_major,
-    float* bin_row_major,
-    std::size_t num_samples
+      float* basis_row_major,
+      float* vin_row_major,
+      float* bin_row_major,
+      std::size_t num_samples
 ) {
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        for (int component = 0; component < 3; ++component) {
-            int max_axis = 0;
-            float max_value = fabsf(basis_row_major[component * 3 + 0]);
-            for (int axis = 1; axis < 3; ++axis) {
-                const float candidate = fabsf(basis_row_major[component * 3 + axis]);
-                if (candidate > max_value) {
-                    max_value = candidate;
-                    max_axis = axis;
-                }
-            }
+      if (blockIdx.x == 0 && threadIdx.x == 0) {
+          for (int component = 0; component < 3; ++component) {
+              std::size_t max_sample = 0;
+              float max_value = fabsf(bin_row_major[component]);
 
-            if (basis_row_major[component * 3 + max_axis] < 0.0f) {
-                for (int axis = 0; axis < 3; ++axis) {
-                    basis_row_major[component * 3 + axis] = -basis_row_major[component * 3 + axis];
-                    vin_row_major[component * 3 + axis] = -vin_row_major[component * 3 + axis];
-                }
-                for (std::size_t sample = 0; sample < num_samples; ++sample) {
-                    bin_row_major[sample * 3 + component] = -bin_row_major[sample * 3 + component];
-                }
-            }
-        }
-    }
-}
+              for (std::size_t sample = 1; sample < num_samples; ++sample) {
+                  const float candidate = fabsf(bin_row_major[sample * 3 + component]);
+                  if (candidate > max_value) {
+                      max_value = candidate;
+                      max_sample = sample;
+                  }
+              }
+
+              if (bin_row_major[max_sample * 3 + component] < 0.0f) {
+                  for (int axis = 0; axis < 3; ++axis) {
+                      basis_row_major[component * 3 + axis] =
+                          -basis_row_major[component * 3 + axis];
+                      vin_row_major[component * 3 + axis] =
+                          -vin_row_major[component * 3 + axis];
+                  }
+
+                  for (std::size_t sample = 0; sample < num_samples; ++sample) {
+                      bin_row_major[sample * 3 + component] =
+                          -bin_row_major[sample * 3 + component];
+                  }
+              }
+          }
+      }
+  }
 
 __global__ void collapse_visibility_kernel(
     const float* vis0_real,
