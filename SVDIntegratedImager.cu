@@ -479,15 +479,12 @@ __global__ void align_pca_signs_kernel(
 
               if (bin_row_major[max_sample * 3 + component] < 0.0f) {
                   for (int axis = 0; axis < 3; ++axis) {
-                      basis_row_major[component * 3 + axis] =
-                          -basis_row_major[component * 3 + axis];
-                      vin_row_major[component * 3 + axis] =
-                          -vin_row_major[component * 3 + axis];
+                      basis_row_major[component * 3 + axis] = -basis_row_major[component * 3 + axis];
+                      vin_row_major[component * 3 + axis] = -vin_row_major[component * 3 + axis];
                   }
 
                   for (std::size_t sample = 0; sample < num_samples; ++sample) {
-                      bin_row_major[sample * 3 + component] =
-                          -bin_row_major[sample * 3 + component];
+                      bin_row_major[sample * 3 + component] = -bin_row_major[sample * 3 + component];
                   }
               }
           }
