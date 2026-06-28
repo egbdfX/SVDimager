@@ -46,6 +46,7 @@ struct HostMeasurementSetData {
     std::vector<std::uint8_t> flag3;
     std::vector<float> weight0;
     std::vector<float> weight3;
+    float array_center_x = 0.0f;
 };
 
 struct DevicePreprocessBuffers {
@@ -195,6 +196,20 @@ HostMeasurementSetData read_measurement_set_rows(
 
     Table spw = vis.keywordSet().asTable("SPECTRAL_WINDOW");
     ROArrayColumn<double> chan_freq_col(spw, "CHAN_FREQ");
+    float array_center_x = 0.0f;
+    try {
+        Table observation = vis.keywordSet().asTable("OBSERVATION");
+        if (observation.tableDesc().isColumn("ARRAY_CENTER") && observation.nrow() > 0) {
+            ROArrayColumn<double> array_center_col(observation, "ARRAY_CENTER");
+            Vector<double> array_center;
+            array_center_col.get(0, array_center);
+            if (array_center.size() > 0) {
+                array_center_x = static_cast<float>(array_center[0]);
+            }
+        }
+    } catch (...) {
+        array_center_x = 0.0f;
+    }
 
     std::vector<float> frequencies_hz;
     for (std::size_t row = 0; row < spw.nrow(); ++row) {
@@ -213,6 +228,7 @@ HostMeasurementSetData read_measurement_set_rows(
     result.num_rows = num_rows;
     result.num_channels = frequencies_hz.size();
     result.num_samples = result.num_rows * result.num_channels;
+    result.array_center_x = array_center_x;
     result.frequencies_hz = std::move(frequencies_hz);
     result.uvw.resize(result.num_rows * 3);
     result.vis0_real.resize(result.num_samples);
@@ -464,45 +480,54 @@ __global__ void project_bin_kernel(
         x2 * basis_row_major[1 * 3 + 2];
 }
 
-__global__ void align_pca_signs_kernel(
-    float* basis_row_major,
-    float* vin_row_major,
-    float* bin_row_major,
-    std::size_t num_samples
-) {
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        for (int component = 0; component < 2; ++component) {
-            std::size_t max_sample = 0;
-            float max_value = fabsf(bin_row_major[component]);
-            for (std::size_t sample = 1; sample < num_samples; ++sample) {
-                const float candidate = fabsf(bin_row_major[sample * 2 + component]);
-                if (candidate > max_value) {
-                    max_value = candidate;
-                    max_sample = sample;
-                }
-            }
+__global__ void orient_vin_from_array_center_kernel(
+      float* basis_row_major,
+      float* vin_row_major,
+      float array_center_x
+  ) {
+      if (blockIdx.x != 0 || threadIdx.x != 0) {
+          return;
+      }
 
-            if (bin_row_major[max_sample * 2 + component] < 0.0f) {
-                for (int axis = 0; axis < 3; ++axis) {
-                    basis_row_major[component * 3 + axis] = -basis_row_major[component * 3 + axis];
-                    vin_row_major[component * 3 + axis] = -vin_row_major[component * 3 + axis];
-                }
-                for (std::size_t sample = 0; sample < num_samples; ++sample) {
-                    bin_row_major[sample * 2 + component] = -bin_row_major[sample * 2 + component];
-                }
-            }
-        }
+      // Row 0: first PCA axis, oriented so its u component is positive.
+      if (basis_row_major[0 * 3 + 0] < 0.0f) {
+          for (int axis = 0; axis < 3; ++axis) {
+              basis_row_major[0 * 3 + axis] = -basis_row_major[0 * 3 + axis];
+          }
+      }
 
-        vin_row_major[2 * 3 + 0] =
-            vin_row_major[0 * 3 + 1] * vin_row_major[1 * 3 + 2] -
-            vin_row_major[0 * 3 + 2] * vin_row_major[1 * 3 + 1];
-        vin_row_major[2 * 3 + 1] =
-            vin_row_major[0 * 3 + 2] * vin_row_major[1 * 3 + 0] -
-            vin_row_major[0 * 3 + 0] * vin_row_major[1 * 3 + 2];
-        vin_row_major[2 * 3 + 2] =
-            vin_row_major[0 * 3 + 0] * vin_row_major[1 * 3 + 1] -
-            vin_row_major[0 * 3 + 1] * vin_row_major[1 * 3 + 0];
-    }
+      // Row 1: second PCA axis, oriented so its v component follows ARRAY_CENTER.x.
+      if (array_center_x != 0.0f && basis_row_major[1 * 3 + 1] * array_center_x < 0.0f) {
+          for (int axis = 0; axis < 3; ++axis) {
+              basis_row_major[1 * 3 + axis] = -basis_row_major[1 * 3 + axis];
+          }
+      }
+
+      // Row 2: complete a right-handed basis with row0 x row1.
+      const float r00 = basis_row_major[0 * 3 + 0];
+      const float r01 = basis_row_major[0 * 3 + 1];
+      const float r02 = basis_row_major[0 * 3 + 2];
+      const float r10 = basis_row_major[1 * 3 + 0];
+      const float r11 = basis_row_major[1 * 3 + 1];
+      const float r12 = basis_row_major[1 * 3 + 2];
+
+      float r20 = r01 * r12 - r02 * r11;
+      float r21 = r02 * r10 - r00 * r12;
+      float r22 = r00 * r11 - r01 * r10;
+      const float norm = sqrtf(r20 * r20 + r21 * r21 + r22 * r22);
+      if (norm > 0.0f) {
+          r20 /= norm;
+          r21 /= norm;
+          r22 /= norm;
+      }
+
+      basis_row_major[2 * 3 + 0] = r20;
+      basis_row_major[2 * 3 + 1] = r21;
+      basis_row_major[2 * 3 + 2] = r22;
+
+      for (int idx = 0; idx < 9; ++idx) {
+          vin_row_major[idx] = basis_row_major[idx];
+      }
 }
 
 __global__ void collapse_visibility_kernel(
@@ -682,17 +707,16 @@ void preprocess_measurement_set_gpu(
         build_basis_kernel<<<1, 1, 0, stream>>>(d_covariance, d_basis, device_buffers.d_vin);
         CHECK_CUDA(cudaGetLastError());
 
-        project_bin_kernel<<<blocks, threads, 0, stream>>>(
-            d_baselines,
+        orient_vin_from_array_center_kernel<<<1, 1, 0, stream>>>(
             d_basis,
-            device_buffers.d_bin,
-            num_samples
+            device_buffers.d_vin,
+            host_data.array_center_x
         );
         CHECK_CUDA(cudaGetLastError());
 
-        align_pca_signs_kernel<<<1, 1, 0, stream>>>(
+        project_bin_kernel<<<blocks, threads, 0, stream>>>(
+            d_baselines,
             d_basis,
-            device_buffers.d_vin,
             device_buffers.d_bin,
             num_samples
         );
