@@ -15,6 +15,7 @@
 #include <casacore/tables/Tables/ArrayColumn.h>
 #include <casacore/tables/Tables/Table.h>
 #include <casacore/tables/Tables/TableRecord.h>
+#include <cstdlib>
 
 #include <cublas_v2.h>
 #include <cusolverDn.h>
@@ -29,6 +30,7 @@
 #define M_PI 3.14159265358979323846
 #define CHEB_MAX_MOMENTS 32
 #define CHEB_TARGET_ERROR 1.0e-2f
+#define CHEB_TARGET_ALPHA 10.0f
 
 struct HostMeasurementSetData {
     std::size_t num_rows = 0;
@@ -835,10 +837,19 @@ struct HostChebyshevSelection {
 	float r3_max = 0.0f;
 	float r3_centre = 0.0f;
 	float r3_half_range = 1.0e-6f;
-	float inv_r3_half_range = 1.0e6f;
 	float max_abs_t3 = 0.0f;
 	size_t valid_pixels = 0;
 	float alpha_max = 0.0f;
+};
+
+struct ChebyshevSlabConfig {
+    float target_alpha = CHEB_TARGET_ALPHA;
+    int num_slabs = 1;
+    float r3_range = 2.0e-6f;
+    float slab_width = 2.0e-6f;
+    float slab_half_range = 1.0e-6f;
+    float inv_slab_half_range = 1.0e6f;
+    float slab_alpha_max = 0.0f;
 };
 
 HostChebyshevSelection finish_host_chebyshev_selection(
@@ -852,11 +863,40 @@ HostChebyshevSelection finish_host_chebyshev_selection(
     result.r3_max = r3_max;
     result.r3_centre = 0.5f * (result.r3_max + result.r3_min);
     result.r3_half_range = fmaxf(0.5f * (result.r3_max - result.r3_min), 1.0e-6f);
-    result.inv_r3_half_range = 1.0f / result.r3_half_range;
     result.max_abs_t3 = max_abs_t3;
     result.valid_pixels = valid_pixels;
     result.alpha_max = 2.0f * M_PI * result.max_abs_t3 * result.r3_half_range;
     return result;
+}
+
+float read_chebyshev_target_alpha() {
+    if (const char* env_target_alpha = std::getenv("SVD_CHEB_TARGET_ALPHA")) {
+        const float parsed_target_alpha = std::atof(env_target_alpha);
+        if (parsed_target_alpha > 0.0f) {
+            return parsed_target_alpha;
+        }
+    }
+    return CHEB_TARGET_ALPHA;
+}
+
+ChebyshevSlabConfig make_chebyshev_slab_config(
+        const HostChebyshevSelection& cheb_selection
+) {
+    ChebyshevSlabConfig config;
+    config.target_alpha = read_chebyshev_target_alpha();
+    config.r3_range = fmaxf(cheb_selection.r3_max - cheb_selection.r3_min, 2.0e-6f);
+    config.num_slabs = static_cast<int>(ceilf(
+          fmaxf(cheb_selection.alpha_max, 0.0f) / config.target_alpha
+    ));
+    if (config.num_slabs < 1) {
+        config.num_slabs = 1;
+    }
+    config.slab_width = config.r3_range / static_cast<float>(config.num_slabs);
+    config.slab_half_range = fmaxf(0.5f * config.slab_width, 1.0e-6f);
+    config.inv_slab_half_range = 1.0f / config.slab_half_range;
+    config.slab_alpha_max =
+        2.0f * M_PI * cheb_selection.max_abs_t3 * config.slab_half_range;
+    return config;
 }
 
 __global__ void r3_range_blocks_kernel(
@@ -1092,9 +1132,11 @@ __global__ void fused_gridding(cufftComplex* r_grid,
                                const float   r1r2_scale,
                                const size_t  grid_size,
                                const size_t  num_baselines,
-                               const float   r3_centre,
-                               const float   inv_r3_half_range,
-                               const int     num_terms){
+                               const float   r3_min,
+                               const float   slab_width,
+                               const float   inv_slab_half_range,
+                               const int     num_terms,
+                               const int     num_slabs){
     const int   KERNEL_SUPPORT_BOUND = 16;
     const int   support              = 8;
     const float beta                 = 15.3704324328;
@@ -1110,7 +1152,11 @@ __global__ void fused_gridding(cufftComplex* r_grid,
     if(idx < num_baselines){
         float pos_r1      = B_in[idx*3+0] * r1r2_scale;
         float pos_r2      = B_in[idx*3+1] * r1r2_scale;
-        float s           = (B_in[idx*3+2] - r3_centre) * inv_r3_half_range;
+        const float r3    = B_in[idx*3+2];
+        int slab_idx      = static_cast<int>(floorf((r3 - r3_min) / slab_width));
+        slab_idx          = min(max(slab_idx, 0), num_slabs - 1);
+        const float r3_centre = r3_min + (static_cast<float>(slab_idx) + 0.5f) * slab_width;
+        float s           = (r3 - r3_centre) * inv_slab_half_range;
         s = fminf(1.0f, fmaxf(-1.0f, s));
         float cheb_values[CHEB_MAX_MOMENTS];
         chebyshev_sequence(s, num_terms, cheb_values);
@@ -1137,7 +1183,8 @@ __global__ void fused_gridding(cufftComplex* r_grid,
                 }
                 const long grid_offset_r1r2r3 = (grid_r1 + origin_offset_r1r2) * (long)grid_size + grid_r2 + origin_offset_r1r2;
                 for (int term = 0; term < num_terms; ++term) {
-                    const size_t slice_offset = static_cast<size_t>(term) * grid_size * grid_size;
+                    const size_t slice_index = static_cast<size_t>(slab_idx) * num_terms + term;
+                    const size_t slice_offset = slice_index * grid_size * grid_size;
                     const float moment_weight = (cheb_values[term] / weight) * kernel_value;
                     atomicAdd(&r_grid[slice_offset + grid_offset_r1r2r3].x, Vis_real[idx] * moment_weight);
                     atomicAdd(&r_grid[slice_offset + grid_offset_r1r2r3].y, Vis_imag[idx] * moment_weight);
@@ -1156,9 +1203,11 @@ __global__ void fused_interpolation(float*       dirty,
                                     const float* conv_corr_kernel,
                                     const float  conv_corr_norm_factor,
                                     const float  inv_num_baselines,
-                                    const float  r3_centre,
-                                    const float  r3_half_range,
-                                    const int    num_terms){
+                                    const float  r3_min,
+                                    const float  slab_width,
+                                    const float  slab_half_range,
+                                    const int    num_terms,
+                                    const int    num_slabs){
     const size_t idx  = blockIdx.x * blockDim.x + threadIdx.x;
     const size_t idy  = blockIdx.y * blockDim.y + threadIdx.y;
     const long   half_image_size = di/2;
@@ -1241,45 +1290,49 @@ __global__ void fused_interpolation(float*       dirty,
         }
         const float branch_sign = (v33 >= 0.0f) ? 1.0f : -1.0f;
         const float t3 = -v33 + branch_sign * sqrtf(root_arg);
-        const float alpha = 2.0f * M_PI * t3 * r3_half_range;
-        const float beta = 2.0f * M_PI * t3 * r3_centre;
-        const float cb = cosf(beta);
-        const float sb = sinf(beta);
+        const float alpha = 2.0f * M_PI * t3 * slab_half_range;
         float jvals[CHEB_MAX_MOMENTS];
         bessel_sequence(alpha, num_terms - 1, jvals);
 
         pixel_sum = 0.0f;
         const long grid_index = gi*gi/2 + gi/2 + idyr*(long)gi + idxr;
-        for (int term = 0; term < num_terms; ++term) {
-            const size_t slice_offset = static_cast<size_t>(term) * gi * gi;
-            const cufftComplex moment = r_grid_stack[slice_offset + grid_index];
-            float coeff_r = 0.0f;
-            float coeff_i = 0.0f;
-            if (term == 0) {
-                coeff_r = cb * jvals[term];
-                coeff_i = sb * jvals[term];
-            } else {
-                const float amplitude = 2.0f * jvals[term];
-                switch (term & 3) {
-                    case 0:
-                        coeff_r =  amplitude * cb;
-                        coeff_i =  amplitude * sb;
-                        break;
-                    case 1:
-                        coeff_r = -amplitude * sb;
-                        coeff_i =  amplitude * cb;
-                        break;
-                    case 2:
-                        coeff_r = -amplitude * cb;
-                        coeff_i = -amplitude * sb;
-                        break;
-                    default:
-                        coeff_r =  amplitude * sb;
-                        coeff_i = -amplitude * cb;
-                        break;
+        for (int slab_idx = 0; slab_idx < num_slabs; ++slab_idx) {
+            const float r3_centre = r3_min + (static_cast<float>(slab_idx) + 0.5f) * slab_width;
+            const float beta = 2.0f * M_PI * t3 * r3_centre;
+            const float cb = cosf(beta);
+            const float sb = sinf(beta);
+            for (int term = 0; term < num_terms; ++term) {
+                const size_t slice_index = static_cast<size_t>(slab_idx) * num_terms + term;
+                const size_t slice_offset = slice_index * gi * gi;
+                const cufftComplex moment = r_grid_stack[slice_offset + grid_index];
+                float coeff_r = 0.0f;
+                float coeff_i = 0.0f;
+                if (term == 0) {
+                    coeff_r = cb * jvals[term];
+                    coeff_i = sb * jvals[term];
+                } else {
+                    const float amplitude = 2.0f * jvals[term];
+                    switch (term & 3) {
+                        case 0:
+                            coeff_r =  amplitude * cb;
+                            coeff_i =  amplitude * sb;
+                            break;
+                        case 1:
+                            coeff_r = -amplitude * sb;
+                            coeff_i =  amplitude * cb;
+                            break;
+                        case 2:
+                            coeff_r = -amplitude * cb;
+                            coeff_i = -amplitude * sb;
+                            break;
+                        default:
+                            coeff_r =  amplitude * sb;
+                            coeff_i = -amplitude * cb;
+                            break;
+                    }
                 }
+                pixel_sum += real_complex_product(coeff_r, coeff_i, moment);
             }
-            pixel_sum += real_complex_product(coeff_r, coeff_i, moment);
         }
         if(idxr+idyr & 1){
             pixel_sum = - pixel_sum;
@@ -1391,6 +1444,8 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
         static_cast<size_t>(cheb_stats[3])
     );
 
+    const ChebyshevSlabConfig slab_config = make_chebyshev_slab_config(cheb_selection);
+
     const int bucket_terms[4] = {8, 16, 24, 32};
     const int selector_alpha_samples = 257;
     const int selector_s_samples = 1024;
@@ -1401,7 +1456,7 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
     const int selector_threads = 256;
     const int selector_blocks = static_cast<int>(ceiling_divide(selector_total_samples, selector_threads));
     cheb_bucket_error_kernel<<<selector_blocks, selector_threads>>>(
-        cheb_selection.alpha_max,
+        slab_config.slab_alpha_max,
         d_bucket_errors,
         selector_alpha_samples,
         selector_s_samples
@@ -1419,11 +1474,12 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
         }
     }
     const size_t moment_plane_size = grid_size * grid_size;
-    const size_t total_moment_size = static_cast<size_t>(active_cheb_terms) * moment_plane_size;
-    
-	cudaMalloc((void**)&dirty, image_size * image_size * sizeof(float));
-	cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float));
-	cudaMalloc((void**)&r_grid_stack, total_moment_size * sizeof(cufftComplex));
+    const size_t total_planes = static_cast<size_t>(slab_config.num_slabs) * static_cast<size_t>(active_cheb_terms);
+    const size_t total_moment_size = total_planes * moment_plane_size;
+
+    CHECK_CUDA(cudaMalloc((void**)&dirty, image_size * image_size * sizeof(float)));
+    CHECK_CUDA(cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float)));
+    CHECK_CUDA(cudaMalloc((void**)&r_grid_stack, total_moment_size * sizeof(cufftComplex)));
 	
 	cudaMemset(dirty, 0, image_size * image_size * sizeof(float));
 	cudaMemset(conv_corr_kernel, 0, (image_size/2+1) * sizeof(float));
@@ -1466,7 +1522,7 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
         1,
         static_cast<int>(moment_plane_size),
         CUFFT_C2C,
-        active_cheb_terms
+        static_cast<int>(total_planes)
     );
 	cufftSetStream(plan, stream1);
 	
@@ -1479,9 +1535,11 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
 		                                   r1r2_scale,
 		                                   grid_size,
 		                                   num_baselines,
-                                           cheb_selection.r3_centre,
-                                           cheb_selection.inv_r3_half_range,
-                                           active_cheb_terms);
+                                           cheb_selection.r3_min,
+                                           slab_config.slab_width,
+                                           slab_config.inv_slab_half_range,
+                                           active_cheb_terms,
+                                           slab_config.num_slabs);
 	cufftExecC2C(plan, r_grid_stack, r_grid_stack, CUFFT_INVERSE);
 	
 	cudaEventRecord(eventstream,stream2);
@@ -1496,9 +1554,11 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
 		                                        conv_corr_kernel,
 		                                        conv_corr_norm_factor,
 		                                        1.0f/static_cast<float>(num_baselines),
-                                                cheb_selection.r3_centre,
-                                                cheb_selection.r3_half_range,
-                                                active_cheb_terms);
+                                                cheb_selection.r3_min,
+                                                slab_config.slab_width,
+                                                slab_config.slab_half_range,
+                                                active_cheb_terms,
+                                                slab_config.num_slabs);
 	
 	cudaStreamSynchronize(stream1);
 	
