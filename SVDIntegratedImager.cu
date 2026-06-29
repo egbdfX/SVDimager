@@ -16,6 +16,7 @@
 #include <casacore/tables/Tables/Table.h>
 #include <casacore/tables/Tables/TableRecord.h>
 #include <cstdlib>
+#include <algorithm>
 
 #include <cublas_v2.h>
 #include <cusolverDn.h>
@@ -1169,7 +1170,9 @@ __global__ void fused_gridding(cufftComplex* r_grid,
                                const float   slab_width,
                                const float   inv_slab_half_range,
                                const int     num_terms,
-                               const int     num_slabs){
+                               const int     slab_start,
+                               const int     num_slabs,
+                               const int     total_num_slabs){
     const int   KERNEL_SUPPORT_BOUND = 16;
     const int   support              = 8;
     const float beta                 = 15.3704324328;
@@ -1187,8 +1190,13 @@ __global__ void fused_gridding(cufftComplex* r_grid,
         float pos_r2      = B_in[idx*3+1] * r1r2_scale;
         const float r3    = B_in[idx*3+2];
         int slab_idx      = static_cast<int>(floorf((r3 - r3_min) / slab_width));
-        slab_idx          = min(max(slab_idx, 0), num_slabs - 1);
+        slab_idx          = min(max(slab_idx, 0), total_num_slabs - 1);
+        const int slab_end = slab_start + num_slabs;
+        if (slab_idx < slab_start || slab_idx >= slab_end) {
+            return;
+        }
         const float r3_centre = r3_min + (static_cast<float>(slab_idx) + 0.5f) * slab_width;
+        const int local_slab_idx = slab_idx - slab_start;
         float s           = (r3 - r3_centre) * inv_slab_half_range;
         s = fminf(1.0f, fmaxf(-1.0f, s));
         float cheb_values[CHEB_MAX_MOMENTS];
@@ -1216,7 +1224,7 @@ __global__ void fused_gridding(cufftComplex* r_grid,
                 }
                 const long grid_offset_r1r2r3 = (grid_r1 + origin_offset_r1r2) * (long)grid_size + grid_r2 + origin_offset_r1r2;
                 for (int term = 0; term < num_terms; ++term) {
-                    const size_t slice_index = static_cast<size_t>(slab_idx) * num_terms + term;
+                    const size_t slice_index = static_cast<size_t>(local_slab_idx) * num_terms + term;
                     const size_t slice_offset = slice_index * grid_size * grid_size;
                     const float moment_weight = (cheb_values[term] / weight) * kernel_value;
                     atomicAdd(&r_grid[slice_offset + grid_offset_r1r2r3].x, Vis_real[idx] * moment_weight);
@@ -1240,6 +1248,7 @@ __global__ void fused_interpolation(float*       dirty,
                                     const float  slab_width,
                                     const float  slab_half_range,
                                     const int    num_terms,
+                                    const int    slab_start,
                                     const int    num_slabs){
     const size_t idx  = blockIdx.x * blockDim.x + threadIdx.x;
     const size_t idy  = blockIdx.y * blockDim.y + threadIdx.y;
@@ -1329,13 +1338,14 @@ __global__ void fused_interpolation(float*       dirty,
 
         pixel_sum = 0.0f;
         const long grid_index = gi*gi/2 + gi/2 + idyr*(long)gi + idxr;
-        for (int slab_idx = 0; slab_idx < num_slabs; ++slab_idx) {
+        for (int local_slab_idx = 0; local_slab_idx < num_slabs; ++local_slab_idx) {
+            const int slab_idx = slab_start + local_slab_idx;
             const float r3_centre = r3_min + (static_cast<float>(slab_idx) + 0.5f) * slab_width;
             const float beta = 2.0f * M_PI * t3 * r3_centre;
             const float cb = cosf(beta);
             const float sb = sinf(beta);
             for (int term = 0; term < num_terms; ++term) {
-                const size_t slice_index = static_cast<size_t>(slab_idx) * num_terms + term;
+                const size_t slice_index = static_cast<size_t>(local_slab_idx) * num_terms + term;
                 const size_t slice_offset = slice_index * gi * gi;
                 const cufftComplex moment = r_grid_stack[slice_offset + grid_index];
                 float coeff_r = 0.0f;
@@ -1398,6 +1408,34 @@ __global__ void fused_interpolation(float*       dirty,
 size_t ceiling_divide(size_t a, size_t b) {
     size_t q =  a/b;
     return q + (a > q*b);
+}
+
+size_t choose_slab_batch_size(
+      size_t total_slabs,
+      int active_cheb_terms,
+      size_t moment_plane_size
+  ) {
+      const char* env_batch = std::getenv("SVDIMAGER_MAX_BATCH_SLABS");
+      if (env_batch != nullptr && env_batch[0] != '\0') {
+          const size_t requested = std::stoull(env_batch);
+          if (requested == 0) {
+              throw std::runtime_error("SVDIMAGER_MAX_BATCH_SLABS must be greater than zero");
+          }
+          return std::min(total_slabs, requested);
+      }
+
+      std::size_t free_bytes = 0;
+      std::size_t total_bytes = 0;
+      CHECK_CUDA(cudaMemGetInfo(&free_bytes, &total_bytes));
+
+      const size_t bytes_per_slab =
+          static_cast<size_t>(active_cheb_terms) *
+          moment_plane_size *
+          sizeof(cufftComplex);
+
+      const size_t grid_budget = free_bytes * 25 / 100;
+      const size_t memory_limited_slabs = std::max<size_t>(1, grid_budget / bytes_per_slab);
+      return std::min(total_slabs, memory_limited_slabs);
 }
 
 int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty_image, size_t image_size, float cell_size){
@@ -1507,16 +1545,20 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
         }
     }
     const size_t moment_plane_size = grid_size * grid_size;
-    const size_t total_planes = static_cast<size_t>(slab_config.num_slabs) * static_cast<size_t>(active_cheb_terms);
-    const size_t total_moment_size = total_planes * moment_plane_size;
+    const size_t max_batch_slabs = choose_slab_batch_size(
+        static_cast<size_t>(slab_config.num_slabs),
+        active_cheb_terms,
+        moment_plane_size
+    );
+    const size_t max_batch_planes = max_batch_slabs * static_cast<size_t>(active_cheb_terms);
+    const size_t max_batch_moment_size = max_batch_planes * moment_plane_size;
 
-    CHECK_CUDA(cudaMalloc((void**)&dirty, image_size * image_size * sizeof(float)));
-    CHECK_CUDA(cudaMalloc((void**)&conv_corr_kernel, (image_size/2+1)*sizeof(float)));
-    CHECK_CUDA(cudaMalloc((void**)&r_grid_stack, total_moment_size * sizeof(cufftComplex)));
+    CHECK_CUDA(cudaMalloc(&dirty, image_size * image_size * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&conv_corr_kernel, (image_size/2+1) * sizeof(float)));
+    CHECK_CUDA(cudaMalloc(&r_grid_stack, max_batch_moment_size * sizeof(cufftComplex)));
 	
 	cudaMemset(dirty, 0, image_size * image_size * sizeof(float));
 	cudaMemset(conv_corr_kernel, 0, (image_size/2+1) * sizeof(float));
-	cudaMemset(r_grid_stack, 0, total_moment_size * sizeof(cufftComplex));
 
 	cudaStatus = cudaDeviceSynchronize();
 	if (cudaStatus != cudaSuccess) {
@@ -1555,47 +1597,70 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
         1,
         static_cast<int>(moment_plane_size),
         CUFFT_C2C,
-        static_cast<int>(total_planes)
+        static_cast<int>(max_batch_planes)
     );
 	cufftSetStream(plan, stream1);
 	
 	convolveKernel<<<Bk, Tk, 0, stream2>>>(conv_corr_kernel, image_size, grid_size, conv_corr_norm_factor);
-	fused_gridding<<<Bg, Tg, 0, stream1>>>(r_grid_stack,
-		                                   preprocess_buffers.d_bin,
-		                                   preprocess_buffers.d_vis_real,
-		                                   preprocess_buffers.d_vis_imag,
-		                                   (const float (*)[3])preprocess_buffers.d_vin,
-		                                   r1r2_scale,
-		                                   grid_size,
-		                                   num_baselines,
-                                           cheb_selection.r3_min,
-                                           slab_config.slab_width,
-                                           slab_config.inv_slab_half_range,
-                                           active_cheb_terms,
-                                           slab_config.num_slabs);
-	cufftExecC2C(plan, r_grid_stack, r_grid_stack, CUFFT_INVERSE);
+    CHECK_CUDA(cudaEventRecord(eventstream, stream2));
+    CHECK_CUDA(cudaStreamWaitEvent(stream1, eventstream, 0));	
+    for (size_t slab_start = 0; slab_start < static_cast<size_t>(slab_config.num_slabs); slab_start += max_batch_slabs) {
+        const size_t batch_slabs = std::min(
+            max_batch_slabs,
+            static_cast<size_t>(slab_config.num_slabs) - slab_start
+        );
+
+        CHECK_CUDA(cudaMemsetAsync(
+            r_grid_stack,
+            0,
+            max_batch_moment_size * sizeof(cufftComplex),
+            stream1
+        ));
+
+        fused_gridding<<<Bg, Tg, 0, stream1>>>(
+            r_grid_stack,
+            preprocess_buffers.d_bin,
+            preprocess_buffers.d_vis_real,
+            preprocess_buffers.d_vis_imag,
+            (const float (*)[3])preprocess_buffers.d_vin,
+            r1r2_scale,
+            grid_size,
+            num_baselines,
+            cheb_selection.r3_min,
+            slab_config.slab_width,
+            slab_config.inv_slab_half_range,
+            active_cheb_terms,
+            static_cast<int>(slab_start),
+            static_cast<int>(batch_slabs),
+            slab_config.num_slabs
+        );
+        CHECK_CUDA(cudaGetLastError());
+
+        cufftExecC2C(plan, r_grid_stack, r_grid_stack, CUFFT_INVERSE);
+
+        fused_interpolation<<<Bs, Ts, 0, stream1>>>(
+            dirty,
+            r_grid_stack,
+            (const float (*)[3])preprocess_buffers.d_vin,
+            cell_size,
+            image_size,
+            grid_size,
+            conv_corr_kernel,
+            conv_corr_norm_factor,
+            1.0f/static_cast<float>(num_baselines),
+            cheb_selection.r3_min,
+            slab_config.slab_width,
+            slab_config.slab_half_range,
+            active_cheb_terms,
+            static_cast<int>(slab_start),
+            static_cast<int>(batch_slabs)
+        );
+        CHECK_CUDA(cudaGetLastError());
+    }
+
+    cudaStreamSynchronize(stream1);
 	
-	cudaEventRecord(eventstream,stream2);
-	cudaStreamWaitEvent(stream1,eventstream,0);
-	
-    fused_interpolation<<<Bs, Ts, 0, stream1>>>(dirty,
-		                                        r_grid_stack,
-		                                        (const float (*)[3])preprocess_buffers.d_vin,
-		                                        cell_size,
-		                                        image_size,
-		                                        grid_size,
-		                                        conv_corr_kernel,
-		                                        conv_corr_norm_factor,
-		                                        1.0f/static_cast<float>(num_baselines),
-                                                cheb_selection.r3_min,
-                                                slab_config.slab_width,
-                                                slab_config.slab_half_range,
-                                                active_cheb_terms,
-                                                slab_config.num_slabs);
-	
-	cudaStreamSynchronize(stream1);
-	
-	cudaEventRecord(stop);
+    cudaEventRecord(stop);
 	cudaEventSynchronize(stop);
 	float milliseconds = 0;
 	cudaEventElapsedTime(&milliseconds, start, stop);
