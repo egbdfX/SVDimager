@@ -1567,6 +1567,8 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
     std::cout << "  N_slab * K moment reconstructions = "
               << static_cast<size_t>(slab_config.num_slabs) *
                  static_cast<size_t>(active_cheb_terms) << "\n";
+    std::cout << "  target approximation error         = "
+              << CHEB_TARGET_ERROR << "\n";
 
     CHECK_CUDA(cudaMalloc(&dirty, image_size * image_size * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&conv_corr_kernel, (image_size/2+1) * sizeof(float)));
