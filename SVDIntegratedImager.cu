@@ -28,6 +28,9 @@
 #include <device_launch_parameters.h>
 #include <math_constants.h>
 
+#include <map>
+#include <casacore/tables/Tables/ScalarColumn.h>
+
 #define M_PI 3.14159265358979323846
 #define CHEB_MAX_MOMENTS 32
 #define CHEB_TARGET_ERROR 1.0e-2f
@@ -48,6 +51,13 @@ struct HostMeasurementSetData {
     std::vector<float> weight0;
     std::vector<float> weight3;
     float array_center_x = 0.0f;
+};
+
+struct MeasurementSetSnapshot {
+    std::size_t index = 0;
+    double time = 0.0;
+    std::vector<std::size_t> rows;
+    HostMeasurementSetData data;
 };
 
 struct DevicePreprocessBuffers {
@@ -318,6 +328,53 @@ HostMeasurementSetData read_measurement_set(const std::string& ms_path) {
         all_rows[row] = row;
     }
     return read_measurement_set_rows(ms_path, all_rows);
+}
+
+std::vector<std::pair<double, std::vector<std::size_t>>> group_rows_by_time(
+    const std::string& ms_path
+) {
+    using casacore::ROScalarColumn;
+    using casacore::Table;
+
+    Table vis(ms_path, Table::Old);
+    ROScalarColumn<double> time_col(vis, "TIME");
+
+    std::map<double, std::vector<std::size_t>> grouped_rows;
+
+    for (std::size_t row = 0; row < vis.nrow(); ++row) {
+        const double time_value = time_col(static_cast<casacore::rownr_t>(row));
+        grouped_rows[time_value].push_back(row);
+    }
+
+    std::vector<std::pair<double, std::vector<std::size_t>>> time_groups;
+    for (const auto& group : grouped_rows) {
+        time_groups.push_back(std::make_pair(group.first, group.second));
+    }
+
+    return time_groups;
+}
+
+MeasurementSetSnapshot read_measurement_set_snapshot(
+    const std::string& ms_path,
+    std::size_t snapshot_index,
+    std::size_t& total_snapshots
+) {
+    const auto time_groups = group_rows_by_time(ms_path);
+    total_snapshots = time_groups.size();
+
+    if (snapshot_index >= time_groups.size()) {
+        throw std::runtime_error("Snapshot_Index is outside available TIME snapshots");
+    }
+
+    const auto& time_group = time_groups[snapshot_index];
+
+    MeasurementSetSnapshot snapshot;
+    snapshot.index = snapshot_index;
+    snapshot.time = time_group.first;
+    snapshot.rows = time_group.second;
+    snapshot.data = read_measurement_set_rows(ms_path, snapshot.rows);
+
+    return snapshot;
 }
 
 namespace {
@@ -1708,13 +1765,13 @@ namespace {
 void print_integrated_usage(const char* program_name) {
     std::cerr
         << "Usage: " << program_name
-        << " MeasurementSet.ms Image_Size Cell_Size Output_Name.fits\n";
+        << " MeasurementSet.ms Image_Size Cell_Size Snapshot_Index Output_Name.fits\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 5) {
+    if (argc != 6) {
         print_integrated_usage(argv[0]);
         return 2;
     }
@@ -1723,7 +1780,8 @@ int main(int argc, char** argv) {
         const std::string ms_path(argv[1]);
         const std::size_t image_size = static_cast<std::size_t>(std::stoul(argv[2]));
         const float cell_size = std::stof(argv[3]);
-        const std::string output_name(argv[4]);
+        const std::size_t snapshot_index = static_cast<std::size_t>(std::stoul(argv[4]));
+        const std::string output_name(argv[5]);
 
         if (image_size == 0) {
             throw std::runtime_error("Image_Size must be greater than zero");
@@ -1734,8 +1792,24 @@ int main(int argc, char** argv) {
 
         const auto total_start = std::chrono::high_resolution_clock::now();
 
-        std::cerr << "Reading Measurement Set: " << ms_path << '\n';
-        HostMeasurementSetData host_data = read_measurement_set(ms_path);
+        std::cerr << "Reading Measurement Set snapshots by TIME: " << ms_path << '\n';
+
+        std::size_t total_snapshots = 0;
+        const MeasurementSetSnapshot snapshot = read_measurement_set_snapshot(
+            ms_path,
+            snapshot_index,
+            total_snapshots
+        );
+
+        std::cerr << "Found " << total_snapshots << " TIME snapshot(s)\n";
+
+        const HostMeasurementSetData& host_data = snapshot.data;
+
+        std::cerr << "Selected snapshot " << snapshot.index
+                  << " time " << snapshot.time
+                  << " rows " << host_data.num_rows
+                  << " samples " << host_data.num_samples
+                  << '\n';
 
         std::cerr << "Preprocessing " << host_data.num_samples
                   << " visibility sample(s) on GPU\n";
