@@ -8,7 +8,7 @@ We develop a GPU-accelerated Transient-Oriented Imager (TOI) for Fast Imaging in
 Make sure GCCcore, CUDA, CASACORE, and CFITSIO are available.
 ```
 make CUDA_ARCH=?
-./svd_integrated_imager_gpu MeasurementSet.ms Image_Size Cell_Size Output_Name.fits
+./svd_integrated_imager_gpu MeasurementSet.ms Image_Size Cell_Size Snapshot_Index Output_Name.fits
 ```
 where **CUDA_ARCH=?** needs to match your GPU hardware (e.g., CUDA_ARCH=80 for A100), **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels), and **Cell_Size** is in units of radians.
 
