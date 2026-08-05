@@ -1553,6 +1553,21 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
     const size_t max_batch_planes = max_batch_slabs * static_cast<size_t>(active_cheb_terms);
     const size_t max_batch_moment_size = max_batch_planes * moment_plane_size;
 
+    std::cout << "Chebyshev summary for paper:\n";
+    std::cout << "  Phi_max                           = "
+              << cheb_selection.alpha_max << "\n";
+    std::cout << "  alpha_target                      = "
+              << slab_config.target_alpha << "\n";
+    std::cout << "  N_slab                            = "
+              << slab_config.num_slabs << "\n";
+    std::cout << "  alpha_slab                        = "
+              << slab_config.slab_alpha_max << "\n";
+    std::cout << "  selected K                        = "
+              << active_cheb_terms << "\n";
+    std::cout << "  N_slab * K moment reconstructions = "
+              << static_cast<size_t>(slab_config.num_slabs) *
+                 static_cast<size_t>(active_cheb_terms) << "\n";
+
     CHECK_CUDA(cudaMalloc(&dirty, image_size * image_size * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&conv_corr_kernel, (image_size/2+1) * sizeof(float)));
     CHECK_CUDA(cudaMalloc(&r_grid_stack, max_batch_moment_size * sizeof(cufftComplex)));
