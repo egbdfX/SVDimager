@@ -45,13 +45,10 @@ X. Li, K. Adámek, M. Giles, W. Armour, "[FIP-TOI: Fast Imaging Pipeline for Pul
 
 ## License
 
-Shield: [![CC BY 4.0][cc-by-shield]][cc-by]
+Shield: [![BSD 3-Clause][bsd-3-shield]][bsd-3]
 
 This work is licensed under a
-[Creative Commons Attribution 4.0 International License][cc-by].
+[BSD 3-Clause License][bsd-3].
 
-[![CC BY 4.0][cc-by-image]][cc-by]
-
-[cc-by]: http://creativecommons.org/licenses/by/4.0/
-[cc-by-image]: https://i.creativecommons.org/l/by/4.0/88x31.png
-[cc-by-shield]: https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg
+[bsd-3]: https://opensource.org/licenses/BSD-3-Clause
+[bsd-3-shield]: https://img.shields.io/badge/License-BSD_3--Clause-blue.svg
