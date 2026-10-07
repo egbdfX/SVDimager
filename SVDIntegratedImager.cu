@@ -480,6 +480,53 @@ __global__ void center_baselines_kernel(
     centered_col_major[2 * num_samples + idx] = baselines_col_major[2 * num_samples + idx] - means[2];
 }
 
+__global__ void mask_zero_samples_kernel(
+    const float* baselines_col_major,
+    const float* vis_real,
+    const float* vis_imag,
+    float* masked_col_major,
+    unsigned int* num_nonzero,
+    std::size_t num_samples
+) {
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_samples) {
+        return;
+    }
+    const bool keep = (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f);
+    for (int axis = 0; axis < 3; ++axis) {
+            keep ? baselines_col_major[axis * num_samples + idx] : 0.0f;
+    }
+    if (keep) {
+        atomicAdd(num_nonzero, 1u);
+    }
+}
+
+__global__ void normalize_sums_by_count_kernel(float* sums, const unsigned int* count) {
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < 3 && *count > 0) {
+        sums[idx] /= static_cast<float>(*count);
+    }
+}
+
+__global__ void center_nonzero_baselines_kernel(
+    const float* baselines_col_major,
+    const float* vis_real,
+    const float* vis_imag,
+    const float* means,
+    float* centered_col_major,
+    std::size_t num_samples
+) {
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= num_samples) {
+        return;
+    }
+    const bool keep = (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f);
+    for (int axis = 0; axis < 3; ++axis) {
+        centered_col_major[axis * num_samples + idx] =
+            keep ? baselines_col_major[axis * num_samples + idx] - means[axis] : 0.0f;
+    }
+}
+
 __global__ void normalize_sums_kernel(float* sums, std::size_t num_samples) {
     const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < 3) {
@@ -706,13 +753,40 @@ void preprocess_measurement_set_gpu(
         );
         CHECK_CUDA(cudaGetLastError());
 
+        collapse_visibility_kernel<<<blocks, threads, 0, stream>>>(
+            d_vis0_real,
+            d_vis0_imag,
+            d_vis3_real,
+            d_vis3_imag,
+            d_flag0,
+            d_flag3,
+            d_weight0,
+            d_weight3,
+            device_buffers.d_vis_real,
+            device_buffers.d_vis_imag,
+            num_samples
+        );
+        CHECK_CUDA(cudaGetLastError());
+        
+        unsigned int* d_num_nonzero = nullptr;
+        CHECK_CUDA(cudaMalloc(&d_num_nonzero, sizeof(unsigned int)));
+        CHECK_CUDA(cudaMemsetAsync(d_num_nonzero, 0, sizeof(unsigned int), stream));
+
         CHECK_CUDA(cudaMemsetAsync(d_sums, 0, 3 * sizeof(float), stream));
-        accumulate_sums_kernel<<<blocks, threads, 0, stream>>>(d_baselines, d_sums, num_samples);
+        mask_zero_samples_kernel<<<blocks, threads, 0, stream>>>(
+            d_baselines, device_buffers.d_vis_real, device_buffers.d_vis_imag,
+            d_centered, d_num_nonzero, num_samples);
         CHECK_CUDA(cudaGetLastError());
-        normalize_sums_kernel<<<1, 32, 0, stream>>>(d_sums, num_samples);
+        accumulate_sums_kernel<<<blocks, threads, 0, stream>>>(d_centered, d_sums, num_samples);
         CHECK_CUDA(cudaGetLastError());
-        center_baselines_kernel<<<blocks, threads, 0, stream>>>(d_baselines, d_sums, d_centered, num_samples);
+        normalize_sums_by_count_kernel<<<1, 32, 0, stream>>>(d_sums, d_num_nonzero);
         CHECK_CUDA(cudaGetLastError());
+        center_nonzero_baselines_kernel<<<blocks, threads, 0, stream>>>(
+            d_baselines, device_buffers.d_vis_real, device_buffers.d_vis_imag,
+            d_sums, d_centered, num_samples);
+        CHECK_CUDA(cudaGetLastError());
+        CHECK_CUDA(cudaStreamSynchronize(stream));
+        cudaFree(d_num_nonzero);
 
         const float alpha = 1.0f;
         const float beta = 0.0f;
@@ -773,21 +847,6 @@ void preprocess_measurement_set_gpu(
             d_baselines,
             d_basis,
             device_buffers.d_bin,
-            num_samples
-        );
-        CHECK_CUDA(cudaGetLastError());
-
-        collapse_visibility_kernel<<<blocks, threads, 0, stream>>>(
-            d_vis0_real,
-            d_vis0_imag,
-            d_vis3_real,
-            d_vis3_imag,
-            d_flag0,
-            d_flag3,
-            d_weight0,
-            d_weight3,
-            device_buffers.d_vis_real,
-            device_buffers.d_vis_imag,
             num_samples
         );
         CHECK_CUDA(cudaGetLastError());
@@ -992,6 +1051,8 @@ ChebyshevSlabConfig make_chebyshev_slab_config(
 
 __global__ void r3_range_blocks_kernel(
         const float* Bin,
+        const float* vis_real,
+        const float* vis_imag,
         float* block_min,
         float* block_max,
         size_t num_baselines
@@ -1003,7 +1064,7 @@ __global__ void r3_range_blocks_kernel(
 
     float r3_min = CUDART_INF_F;
     float r3_max = -CUDART_INF_F;
-    if (idx < num_baselines) {
+    if (idx < num_baselines && (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f)) {
         const float r3 = Bin[idx * 3 + 2];
         r3_min = r3;
         r3_max = r3;
@@ -1527,6 +1588,8 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
 
     r3_range_blocks_kernel<<<r3_stats_blocks, stats_threads>>>(
         preprocess_buffers.d_bin,
+        preprocess_buffers.d_vis_real,
+        preprocess_buffers.d_vis_imag,
         d_r3_block_min,
         d_r3_block_max,
         num_baselines
