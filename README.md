@@ -15,7 +15,7 @@ where **CUDA_ARCH=?** needs to match your GPU hardware (e.g., CUDA_ARCH=80 for A
 For near-coplanar snapshots, TOI applies the Chebyshev correction described in our paper. The SVD plane and the range of the residual coordinate are fitted to the samples with non-zero visibilities only, since zero-valued samples do not contribute to the image. At run time TOI prints a "Chebyshev summary" (Phi_max, number of slabs, alpha_slab, selected number of Chebyshev terms K, and the number of moment reconstructions).
 
 ### Version note
-Since commit dd19f79, the SVD plane and the residual range are fitted to non-zero visibilities only. For arrays whose longest baselines carry no signal (e.g. fully resolved sources), this reduces the number of slabs; for SKA AA2 in the paper's simulation, from 17 slabs (272 moment grids) to 1 slab (16 moment grids), with the same measured SNR and source positions. The results in the first version of the paper were produced with commit a37400a.
+Since commit `dd19f79`, the SVD plane and the residual range are fitted to non-zero visibilities only. For arrays whose longest baselines carry no signal (e.g. fully resolved sources), this reduces the number of slabs; for SKA AA2 in the paper's simulation, from 17 slabs (272 moment grids) to 1 slab (16 moment grids), with the same measured SNR and source positions. The results in the first version of the paper were produced with commit `a37400a`.
 
 ### Archive
 
