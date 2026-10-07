@@ -494,7 +494,7 @@ __global__ void mask_zero_samples_kernel(
     }
     const bool keep = (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f);
     for (int axis = 0; axis < 3; ++axis) {
-            keep ? baselines_col_major[axis * num_samples + idx] : 0.0f;
+            masked_col_major[axis * num_samples + idx] = keep ? baselines_col_major[axis * num_samples + idx] : 0.0f;
     }
     if (keep) {
         atomicAdd(num_nonzero, 1u);
