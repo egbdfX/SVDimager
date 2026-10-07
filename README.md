@@ -10,12 +10,12 @@ Make sure GCCcore, CUDA, CASACORE, and CFITSIO are available.
 make CUDA_ARCH=?
 ./svd_integrated_imager_gpu MeasurementSet.ms Image_Size Cell_Size Snapshot_Index Output_Name.fits
 ```
-where **CUDA_ARCH=?** needs to match your GPU hardware (e.g., CUDA_ARCH=80 for A100), **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels), **Cell_Size** is in units of radians, and **Snapshot_Index** selects the TIME snapshot to image (0-based; use 0 for a Measurement Set with a single time step). Optionally, **SVD_CHEB_TARGET_ALPHA** for target residual phase per slab (default 10), and **SVDIMAGER_MAX_BATCH_SLABS** for maximum number of slabs processed per GPU batch (default: chosen from free GPU memory).
+where **CUDA_ARCH=?** needs to match your GPU hardware (e.g., CUDA_ARCH=80 for A100), **Image_Size** is an integer (e.g., if you input 128, it means the image size is $128 \times 128$ pixels), **Cell_Size** is in units of radians, and **Snapshot_Index** selects the TIME snapshot to image (0-based; use 0 for a Measurement Set with a single time step). Optional environment variables, **SVD_CHEB_TARGET_ALPHA** for target residual phase per slab (default 10), and **SVDIMAGER_MAX_BATCH_SLABS** for maximum number of slabs processed per GPU batch (default: chosen from free GPU memory).
 
 For near-coplanar snapshots, TOI applies the Chebyshev correction described in our paper. The SVD plane and the range of the residual coordinate are fitted to the samples with non-zero visibilities only, since zero-valued samples do not contribute to the image. At run time TOI prints a "Chebyshev summary" (Phi_max, number of slabs, alpha_slab, selected number of Chebyshev terms K, and the number of moment reconstructions).
 
 ### Version note
-Since commit `dd19f79`, the SVD plane and the residual range are fitted to non-zero visibilities only. For arrays whose longest baselines carry no signal (e.g. fully resolved sources), this reduces the number of slabs; for SKA AA2 in the paper's simulation, from 17 slabs (272 moment grids) to 1 slab (16 moment grids), with the same measured SNR and source positions. The results in the first version of the paper were produced with commit `a37400a`.
+Since commit `dd19f79`, the SVD plane and the residual range are fitted to non-zero visibilities only. For arrays whose longest baselines carry no signal (e.g. fully resolved sources), this reduces the number of slabs; for SKA AA2 in the paper's simulation, from 17 slabs (272 moment grids) to 1 slab (16 moment grids), with SNR and source positions unchanged to within a negligible range. The results in the zero-included columns in the table were produced with commit `a37400a`.
 
 ### Archive
 
