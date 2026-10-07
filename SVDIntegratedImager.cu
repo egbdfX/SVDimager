@@ -464,21 +464,8 @@ __global__ void accumulate_sums_kernel(
     }
 }
 
-__global__ void center_baselines_kernel(
-    const float* baselines_col_major,
-    const float* means,
-    float* centered_col_major,
-    std::size_t num_samples
-) {
-    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= num_samples) {
-        return;
-    }
-
-    centered_col_major[0 * num_samples + idx] = baselines_col_major[0 * num_samples + idx] - means[0];
-    centered_col_major[1 * num_samples + idx] = baselines_col_major[1 * num_samples + idx] - means[1];
-    centered_col_major[2 * num_samples + idx] = baselines_col_major[2 * num_samples + idx] - means[2];
-}
+// The SVD plane and the r3 range are fitted only to samples with non-zero visibility: 
+// zero-valued samples add nothing to the image but can enlarge the r3 range and hence the number of slabs.
 
 __global__ void mask_zero_samples_kernel(
     const float* baselines_col_major,
@@ -524,13 +511,6 @@ __global__ void center_nonzero_baselines_kernel(
     for (int axis = 0; axis < 3; ++axis) {
         centered_col_major[axis * num_samples + idx] =
             keep ? baselines_col_major[axis * num_samples + idx] - means[axis] : 0.0f;
-    }
-}
-
-__global__ void normalize_sums_kernel(float* sums, std::size_t num_samples) {
-    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < 3) {
-        sums[idx] /= static_cast<float>(num_samples);
     }
 }
 
