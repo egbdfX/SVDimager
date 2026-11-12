@@ -464,8 +464,22 @@ __global__ void accumulate_sums_kernel(
     }
 }
 
-// The SVD plane and the r3 range are fitted only to samples with non-zero visibility: 
-// zero-valued samples add nothing to the image but can enlarge the r3 range and hence the number of slabs.
+// Chebyshev mode, selected by the optional 6th command-line argument:
+//   "economical" (default): the SVD plane and the r3 range are fitted only to samples with
+//                non-zero visibility: zero-valued samples add nothing to the image but can
+//                enlarge the r3 range and hence the number of slabs.
+//   "all":       the SVD plane and the r3 range are fitted to all samples of the snapshot,
+//                so that they depend only on the array configuration and observing setup.
+static bool g_fit_nonzero_only = true;
+
+__device__ __forceinline__ bool sample_used_for_fit(
+    const float* vis_real,
+    const float* vis_imag,
+    std::size_t idx,
+    bool fit_nonzero_only
+) {
+    return !fit_nonzero_only || vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f;
+}
 
 __global__ void mask_zero_samples_kernel(
     const float* baselines_col_major,
@@ -473,13 +487,14 @@ __global__ void mask_zero_samples_kernel(
     const float* vis_imag,
     float* masked_col_major,
     unsigned int* num_nonzero,
-    std::size_t num_samples
+    std::size_t num_samples,
+    bool fit_nonzero_only
 ) {
     const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_samples) {
         return;
     }
-    const bool keep = (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f);
+    const bool keep = sample_used_for_fit(vis_real, vis_imag, idx, fit_nonzero_only);
     for (int axis = 0; axis < 3; ++axis) {
             masked_col_major[axis * num_samples + idx] = keep ? baselines_col_major[axis * num_samples + idx] : 0.0f;
     }
@@ -501,13 +516,14 @@ __global__ void center_nonzero_baselines_kernel(
     const float* vis_imag,
     const float* means,
     float* centered_col_major,
-    std::size_t num_samples
+    std::size_t num_samples,
+    bool fit_nonzero_only
 ) {
     const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_samples) {
         return;
     }
-    const bool keep = (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f);
+    const bool keep = sample_used_for_fit(vis_real, vis_imag, idx, fit_nonzero_only);
     for (int axis = 0; axis < 3; ++axis) {
         centered_col_major[axis * num_samples + idx] =
             keep ? baselines_col_major[axis * num_samples + idx] - means[axis] : 0.0f;
@@ -755,7 +771,7 @@ void preprocess_measurement_set_gpu(
         CHECK_CUDA(cudaMemsetAsync(d_sums, 0, 3 * sizeof(float), stream));
         mask_zero_samples_kernel<<<blocks, threads, 0, stream>>>(
             d_baselines, device_buffers.d_vis_real, device_buffers.d_vis_imag,
-            d_centered, d_num_nonzero, num_samples);
+            d_centered, d_num_nonzero, num_samples, g_fit_nonzero_only);
         CHECK_CUDA(cudaGetLastError());
         accumulate_sums_kernel<<<blocks, threads, 0, stream>>>(d_centered, d_sums, num_samples);
         CHECK_CUDA(cudaGetLastError());
@@ -763,7 +779,7 @@ void preprocess_measurement_set_gpu(
         CHECK_CUDA(cudaGetLastError());
         center_nonzero_baselines_kernel<<<blocks, threads, 0, stream>>>(
             d_baselines, device_buffers.d_vis_real, device_buffers.d_vis_imag,
-            d_sums, d_centered, num_samples);
+            d_sums, d_centered, num_samples, g_fit_nonzero_only);
         CHECK_CUDA(cudaGetLastError());
         CHECK_CUDA(cudaStreamSynchronize(stream));
         cudaFree(d_num_nonzero);
@@ -1035,7 +1051,8 @@ __global__ void r3_range_blocks_kernel(
         const float* vis_imag,
         float* block_min,
         float* block_max,
-        size_t num_baselines
+        size_t num_baselines,
+        bool fit_nonzero_only
 ) {
     __shared__ float local_min[256];
     __shared__ float local_max[256];
@@ -1044,7 +1061,7 @@ __global__ void r3_range_blocks_kernel(
 
     float r3_min = CUDART_INF_F;
     float r3_max = -CUDART_INF_F;
-    if (idx < num_baselines && (vis_real[idx] != 0.0f || vis_imag[idx] != 0.0f)) {
+    if (idx < num_baselines && sample_used_for_fit(vis_real, vis_imag, idx, fit_nonzero_only)) {
         const float r3 = Bin[idx * 3 + 2];
         r3_min = r3;
         r3_max = r3;
@@ -1572,7 +1589,8 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
         preprocess_buffers.d_vis_imag,
         d_r3_block_min,
         d_r3_block_max,
-        num_baselines
+        num_baselines,
+        g_fit_nonzero_only
     );
     CHECK_CUDA(cudaGetLastError());
     t3_stats_blocks_kernel<<<t3_stats_blocks, stats_threads>>>(
@@ -1654,6 +1672,11 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
     const size_t max_batch_moment_size = max_batch_planes * moment_plane_size;
 
     std::cout << "Chebyshev summary for paper:\n";
+    std::cout << "  Chebyshev mode                    = "
+              << (g_fit_nonzero_only
+                      ? "economical (plane and r3 range fitted to non-zero visibilities)"
+                      : "all (plane and r3 range fitted to all samples)")
+              << "\n";
     std::cout << "  Phi_max                           = "
               << cheb_selection.alpha_max << "\n";
     std::cout << "  alpha_target                      = "
@@ -1808,13 +1831,13 @@ namespace {
 void print_integrated_usage(const char* program_name) {
     std::cerr
         << "Usage: " << program_name
-        << " MeasurementSet.ms Image_Size Cell_Size Snapshot_Index Output_Name.fits\n";
+        << " MeasurementSet.ms Image_Size Cell_Size Snapshot_Index Output_Name.fits [Chebyshev_Mode]\n" << "Chebyshev_Mode: economical (default) or all\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 6) {
+    if (argc != 6 && argc != 7) {
         print_integrated_usage(argv[0]);
         return 2;
     }
@@ -1825,6 +1848,17 @@ int main(int argc, char** argv) {
         const float cell_size = std::stof(argv[3]);
         const std::size_t snapshot_index = static_cast<std::size_t>(std::stoul(argv[4]));
         const std::string output_name(argv[5]);
+        if (argc == 7) {
+            const std::string mode(argv[6]);
+            if (mode == "all") {
+                g_fit_nonzero_only = false;
+            } else if (mode == "economical") {
+                g_fit_nonzero_only = true;
+            } else {
+                print_integrated_usage(argv[0]);
+                throw std::runtime_error("Chebyshev_Mode must be 'economical' or 'all', got '" + mode + "'");
+            }
+        }
 
         if (image_size == 0) {
             throw std::runtime_error("Image_Size must be greater than zero");
