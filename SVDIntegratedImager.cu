@@ -17,6 +17,7 @@
 #include <casacore/tables/Tables/ArrayColumn.h>
 #include <casacore/tables/Tables/Table.h>
 #include <casacore/tables/Tables/TableRecord.h>
+#include <cstdlib>
 
 #include <cublas_v2.h>
 #include <cusolverDn.h>
@@ -965,7 +966,7 @@ __global__ void fused_interpolation(float*       dirty,
                                     const size_t gi,
                                     const float* conv_corr_kernel,
                                     const float  conv_corr_norm_factor,
-                                    const float  inv_num_baselines){
+                                    const float  inv_num_baselines, const bool take_abs){
     const size_t idx  = blockIdx.x * blockDim.x + threadIdx.x;
     const size_t idy  = blockIdx.y * blockDim.y + threadIdx.y;
     const long   half_image_size = di/2;
@@ -1046,7 +1047,7 @@ __global__ void fused_interpolation(float*       dirty,
                           conv_corr_kernel[abs(idyr)] *
                           conv_corr_norm_factor       *
                           conv_corr_norm_factor);
-        pixel_sum  = fabs(pixel_sum);
+        if (take_abs) pixel_sum = fabs(pixel_sum);
 
         const float LL    = oi0 - half_image_size;
         const float MM    = oi1 - half_image_size;
@@ -1143,7 +1144,8 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
 		                                        grid_size,
 		                                        conv_corr_kernel,
 		                                        conv_corr_norm_factor,
-		                                        1.0f/static_cast<float>(num_baselines));
+		                                        1.0f/static_cast<float>(num_baselines),
+                                                std::getenv("TOI_SIGNED") == nullptr);
 	
 	cudaStreamSynchronize(stream1);
 	
