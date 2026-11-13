@@ -1364,7 +1364,7 @@ __global__ void fused_interpolation(float*       dirty,
                                     const float  slab_half_range,
                                     const int    num_terms,
                                     const int    slab_start,
-                                    const int    num_slabs){
+                                    const int    num_slabs, const bool take_abs){
     const size_t idx  = blockIdx.x * blockDim.x + threadIdx.x;
     const size_t idy  = blockIdx.y * blockDim.y + threadIdx.y;
     const long   half_image_size = di/2;
@@ -1500,7 +1500,7 @@ __global__ void fused_interpolation(float*       dirty,
                           conv_corr_kernel[abs(idyr)] *
                           conv_corr_norm_factor       *
                           conv_corr_norm_factor);
-        pixel_sum  = fabs(pixel_sum);
+        if (take_abs) pixel_sum = fabs(pixel_sum);
 
         const float LL    = oi0 - half_image_size;
         const float MM    = oi1 - half_image_size;
@@ -1793,7 +1793,7 @@ int FIpipeDevice(const DevicePreprocessBuffers& preprocess_buffers, float* dirty
             slab_config.slab_half_range,
             active_cheb_terms,
             static_cast<int>(slab_start),
-            static_cast<int>(batch_slabs)
+            static_cast<int>(batch_slabs), std::getenv("TOI_SIGNED") == nullptr
         );
         CHECK_CUDA(cudaGetLastError());
     }
